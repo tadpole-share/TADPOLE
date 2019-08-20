@@ -1,0 +1,341 @@
+---
+title: "TADPOLE"
+author: "José Tamez-Peña"
+date: "October 20, 2017"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, echo = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, warning = FALSE, message = FALSE,comment = "#>")
+```
+
+```{r Libraries, echo = FALSE}
+
+library("epiR")
+library("FRESA.CAD")
+library(network)
+library(GGally)
+library("e1071")
+
+TADPOLE_predictors <- read.delim("PredictorsList.txt")
+
+load(file="D3Imputed.RDATA")
+load(file="TEST_TADPOLEMRI.RDATA")
+load(file="TRAIN_TADPOLEMRI.RDATA")
+load(file="trainTadploe.norm.RDATA")
+load(file="testTadploe.norm.RDATA")
+load(file="D3.norm.RDATA")
+
+```
+
+```{r spliting by visit}
+months <- c(0,3,6,12,18,24,30,36,42,48,54,60,66,72,78,84,90,96,102,108,114,120)
+
+VISIT_TRAINCROSSMRI <- list()
+VISIT_TESTCROSSMRI <- list()
+i = 1;
+for (j in months )
+{
+  VISIT_TRAINCROSSMRI[[i]] <- subset(trainTadploe.norm,Month==j)
+  VISIT_TESTCROSSMRI[[i]] <- subset(testTadploe.norm,Month==j)
+  i = i + 1
+}
+sampledcolumns <- c("RID",as.character(TADPOLE_predictors[,1]));
+
+testLastTimePointWithNL <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="NL")[,sampledcolumns]
+testLastTimePointWithMCI <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="MCI")[,sampledcolumns]
+testLastTimePointWithAD <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="Dementia")[,sampledcolumns]
+
+testWithNL <- subset(testTadploe.norm,LastDX2=="NL")[,sampledcolumns]
+testWithMCI <- subset(testTadploe.norm,LastDX2=="MCI")[,sampledcolumns]
+testWithAD <- subset(testTadploe.norm,LastDX2=="Dementia")[,sampledcolumns]
+
+```
+
+
+```{r univariate NL to MCI}
+CASESNLtoMCI <- NULL
+YearNLtoMCI <- NULL
+controlYearNLtoMCI <- NULL;
+CONTROLNLtoMCI <- NULL;
+TestSetNLtoMCI <- NULL;
+j=1
+for (j in 1:length(VISIT_TRAINCROSSMRI) )
+{
+  tmpss <-  subset(VISIT_TRAINCROSSMRI[[j]],NL_MCI==1 & BDX==1 & LastDX2=="MCI")
+  YearNLtoMCI <- c(YearNLtoMCI,as.numeric(tmpss$YearNLtoMCI))
+  CASESNLtoMCI <- rbind(CASESNLtoMCI,tmpss[,sampledcolumns])
+
+  tmpss <- subset(VISIT_TRAINCROSSMRI[[j]],BXBL=="CN" & BDX==1 & LastDX2=="NL" & LastVisit>5.0)
+  controlYearNLtoMCI <- c(controlYearNLtoMCI,(tmpss$YearNLtoMCI))
+  CONTROLNLtoMCI <- rbind(CONTROLNLtoMCI,tmpss[,sampledcolumns])
+}
+
+CASESNLtoMCI <- cbind(YearNLtoMCI,CASESNLtoMCI)
+CASESNLtoMCI <- CASESNLtoMCI[complete.cases(CASESNLtoMCI),]
+CONTROLNLtoMCI <- cbind(controlYearNLtoMCI,CONTROLNLtoMCI)
+CONTROLNLtoMCI <- CONTROLNLtoMCI[complete.cases(CONTROLNLtoMCI),]
+colnames(CONTROLNLtoMCI) <- colnames(CASESNLtoMCI)
+
+CASESNLtoMCI$theTimeToMCI <- sqrt(abs(CASESNLtoMCI$YearNLtoMCI))
+CASESNLtoMCI$YearNLtoMCI <- NULL
+
+CONTROLNLtoMCI$theTimeToMCI <- sqrt(100-CONTROLNLtoMCI$AGE)
+CONTROLNLtoMCI$YearNLtoMCI <- NULL
+
+#CaseControltoMCI <- rbind(CASESNLtoMCI,CONTROLNLtoMCI[sample(nrow(CASESNLtoMCI),nrow(CASESNLtoMCI)/3),])
+CaseControltoMCI <- CASESNLtoMCI
+
+
+ToMCITIme <- univariateRankVariables(variableList = TADPOLE_predictors,
+	                                            formula = "theTimeToMCI ~ 1",
+	                                            Outcome = "theTimeToMCI",
+	                                            data = CaseControltoMCI, 
+	                                            categorizationType = "Raw", 
+	                                            type = "LM", 
+	                                            rankingTest = "Ztest",
+	                                            description = "Description",
+                                               uniType="Regression")
+
+
+```
+
+
+```{r Modeling time to MCI}
+compute=FALSE
+numberofRepp = 5
+numberofFolds = 5
+numberOfTrials = 5
+allformulas <- character();
+logitcor <- numeric();
+logitMAD <- numeric();
+
+testWithMCI$theTimeToMCI <- numeric(nrow(testWithMCI))
+alltestpredicts <- NULL
+allD3predicts <- NULL
+
+for ( repp in 1:numberofRepp)
+{
+
+  ids_ca <- unique(as.character(CaseControltoMCI$RID))
+	casefolds <- cvTools::cvFolds(length(ids_ca), numberofFolds,1, "random");
+	
+	 j=1
+	for (j in 1:numberofFolds)
+	{
+
+	  sampleIDS_TimeToMCI <- ids_ca[casefolds$subsets[casefolds$which != j,]];
+
+    trainTimeToMCI <- subset(CaseControltoMCI,RID %in% sampleIDS_TimeToMCI)
+    testTimeToMCI <- subset(CaseControltoMCI,!(RID %in% sampleIDS_TimeToMCI))
+    
+    testD3 <- subset(D3.norm,!(RID %in% sampleIDS_TimeToMCI))
+    testD3$theTimeToMCI <- rep(0,nrow(testD3))
+    
+    print(length(unique(as.character(trainTimeToMCI$RID))))
+    print(length(unique(as.character(testTimeToMCI$RID))))
+    
+    ids <- unique(as.character(trainTimeToMCI$RID))
+    sys_times <- NULL;
+    TimeToMCI <- list();
+    n=1
+    if (compute)
+    {
+      for (n in 1:numberOfTrials)
+      {
+        singlecaseTimeToMCI <- NULL;
+        for (i in ids)
+        {
+          case1 <- subset(trainTimeToMCI,RID==i)
+          caserows <- nrow(case1)
+          if (caserows>1)
+          {
+            singlecaseTimeToMCI <- rbind(singlecaseTimeToMCI,case1[sample(caserows, 1),])
+          }
+          else
+          {
+            singlecaseTimeToMCI <- rbind(singlecaseTimeToMCI,case1)
+          }
+        }
+        singlecaseTimeToMCI$RID <- NULL;
+        singlecaseTimeToMCI$BDX <- NULL;
+        print(nrow(singlecaseTimeToMCI))
+        sys_times <- rbind(sys_times,system.time(TimeToMCI[[n]] <- FRESA.Model(theTimeToMCI ~ 1,singlecaseTimeToMCI)))
+      }
+      save(sys_times,file=paste("sys_times_TimeToMCI",numberOfTrials,j,repp,".RDATA",sep="_"))
+      save(TimeToMCI,file=paste("TimeToMCI",numberOfTrials,j,repp,".RDATA",sep="_"))
+    }
+    else
+    {
+      load(file=paste("TimeToMCI",numberOfTrials,j,repp,".RDATA",sep="_"))
+      sampleIDS_TimeToMCI <- NULL;
+    }
+    
+
+    baggedformula <- character();
+    for (n in 1:numberOfTrials)
+    {
+      if (length(TimeToMCI[[n]]$BSWiMS.model$coefficients)>1)
+      {
+        baggedformula <- append(baggedformula,TimeToMCI[[n]]$BSWiMS.model$formula)
+      }
+      if (!compute)
+      {
+    	  idst <- unlist(str_split(rownames(TimeToMCI[[n]]$bootstrappedModel$data),"_"))
+        sampleIDS_TimeToMCI <- append(sampleIDS_TimeToMCI,idst[2*(0:(length(idst)-1))+1])
+      }
+    }
+
+    if (!compute)
+    {
+    	sampleIDS_TimeToMCI <- unique(sampleIDS_TimeToMCI)
+      trainTimeToMCI <- subset(CaseControltoMCI,(RID %in% sampleIDS_TimeToMCI))
+      testTimeToMCI <- subset(CaseControltoMCI,!(RID %in% sampleIDS_TimeToMCI))
+      
+      testD3 <- subset(D3.norm,!(RID %in% sampleIDS_TimeToMCI))
+      testD3$theTimeToMCI <- rep(0,nrow(testD3))
+    }
+    mp <- medianPredict(as.character(baggedformula),trainTimeToMCI,testTimeToMCI,predictType ="linear",type="LM")
+    alltestpredicts <- rbind(alltestpredicts,cbind(testTimeToMCI$theTimeToMCI,mp$medianPredict))
+    plot(testTimeToMCI$theTimeToMCI~mp$medianPredict)
+    ct <- cor.test(testTimeToMCI$theTimeToMCI,mp$medianPredict)
+    logitcor <- append(logitcor,ct$estimate)
+    res <- testTimeToMCI$theTimeToMCI^2-mp$medianPredict^2
+    res <- res[testTimeToMCI$theTimeToMCI<2]
+    logitMAD <- append(logitMAD,mean(abs(res)))
+    print(logitMAD)
+    allformulas <- append(allformulas,as.character(baggedformula))
+
+    mpD3 <- medianPredict(as.character(baggedformula),trainTimeToMCI,testD3,predictType ="linear",type="LM")
+    allD3predicts <- rbind(allD3predicts,cbind(testD3$RID,mpD3$medianPredict))
+
+    
+  }
+}
+
+
+plot(alltestpredicts[,1]~alltestpredicts[,2],main="All Tests")
+tsamples <- length(allformulas)
+testWithNL$theTimeToMCI <- numeric(nrow(testWithNL))
+
+
+mpl <- medianPredict(allformulas,CaseControltoMCI,testWithNL,predictType ="linear",type="LM")
+mpl$predictions[,-1] <- mpl$predictions[,-1]^2
+cdft <- NULL
+sd(mpl$predictions[30,-1])
+nelem <- nrow(mpl$predictions[,-1])*ncol(mpl$predictions[,-1])
+
+mpl$predictions[,-1] <-  mpl$predictions[,-1]+as.data.frame(matrix(rnorm(nelem,0,mean(logitMAD)),nrow=nrow(mpl$predictions)));
+sd(mpl$predictions[30,-1])
+to2018 <- testTadploe.norm[rownames(mpl$predictions),"to2018"]
+names(to2018) <- rownames(mpl$predictions)
+
+for (i in 1:nrow(mpl$predictions))
+{
+  nd <- mpl$predictions[i,-1]
+  if ((sna <- sum(is.na(nd))) > 0)
+  {
+    if (sna > tsamples/2)
+    {
+      nd <- numeric(tsamples) 
+    }
+    else
+    {
+      nd <- nd[!is.na(nd)];
+    }
+  }
+  fn <- ecdf(as.numeric(nd))
+  x <- (1:60)/12+to2018[i]
+  fn <- cbind(rep(names(to2018[i]),60),fn(x))
+  cdft <- rbind(cdft,fn)
+#  cdft <- rbind(cdft,fn(x))
+}
+#rownames(cdft) <- rownames(mpl$predictions)
+write.csv(cdft,file=paste(repp,"TimeToMCI_CDF.csv",sep="_"))
+write.csv(mpl$predictions,file=paste(repp,"TimeToMCI.csv",sep="_"))
+write.csv(allformulas,file=paste(repp,"AllFormulasTimeToMCI.csv",sep="_"))
+
+MCIandNL <- testLastTimePointWithNL
+MCIandNL$theTimeToMCI <- numeric(nrow(MCIandNL))
+
+mpl <- medianPredict(allformulas,CaseControltoMCI,MCIandNL,predictType ="linear",type="LM")
+mpl$predictions[,-1] <- mpl$predictions[,-1]^2
+cdft <- NULL
+sd(mpl$predictions[10,-1])
+nelem <- nrow(mpl$predictions[,-1])*ncol(mpl$predictions[,-1])
+
+mpl$predictions[,-1] <-  mpl$predictions[,-1]+as.data.frame(matrix(rnorm(nelem,0,mean(logitMAD)),nrow=nrow(mpl$predictions)));
+sd(mpl$predictions[10,-1])
+sum(is.na(mpl$predictions[,-1]))
+
+to2018 <- testTadploe.norm[rownames(mpl$predictions),"to2018"]
+names(to2018) <- rownames(mpl$predictions)
+
+for (i in 1:nrow(mpl$predictions))
+{
+  nd <- mpl$predictions[i,-1]
+  if ((sna <- sum(is.na(nd))) > 0)
+  {
+    if (sna > tsamples/2)
+    {
+      nd <- numeric(tsamples) 
+    }
+    else
+    {
+      nd <- nd[!is.na(nd)];
+    }
+  }
+  fn <- ecdf(as.numeric(nd))
+  x <- (1:60)/12+to2018[i]
+  fn <- cbind(rep(names(to2018[i]),60),fn(x))
+  cdft <- rbind(cdft,fn)
+#  cdft <- rbind(cdft,fn(x))
+}
+#rownames(cdft) <- rownames(mpl$predictions)
+write.csv(cdft,file=paste(repp,"LastObservation_TimeToMCI_CDF.csv",sep="_"))
+write.csv(mpl$predictions,file=paste(repp,"LastObservation_TimeToMCI.csv",sep="_"))
+
+
+write.csv(allD3predicts,file=paste(repp,"TimeToMCI_D3.csv",sep="_"))
+
+bp <- boxplot(allD3predicts[,2]~allD3predicts[,1])
+cdft <- NULL
+to2018 <- D3.norm$to2018
+names(to2018) <- rownames(D3.norm)
+allD3predicts <- as.data.frame(allD3predicts)
+i=1
+tsamples <-5
+for (i in 1:nrow(D3.norm))
+{
+  nd <- subset(allD3predicts,V1==D3.norm$RID[i])[,2];
+  nd <- nd + rnorm(length(nd),0,mean(logitMAD))
+  if ((sna <- sum(is.na(nd))) > 0)
+  {
+    if (sna > tsamples/2)
+    {
+      nd <- numeric(tsamples) 
+    }
+    else
+    {
+      nd <- nd[!is.na(nd)];
+    }
+  }
+  fn <- ecdf(as.numeric(nd))
+  x <- (1:60)/12+to2018[i]
+  fn <- cbind(rep(names(to2018[i]),60),fn(x))
+  cdft <- rbind(cdft,fn)
+#  cdft <- rbind(cdft,fn(x))
+}
+#rownames(cdft) <- rownames(D3.norm)
+write.csv(cdft,file=paste(repp,"D3_TimeToMCI_CDF.csv",sep="_"))
+
+barplot(logitcor)
+barplot(logitMAD)
+
+
+```

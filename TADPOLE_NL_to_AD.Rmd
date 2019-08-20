@@ -1,0 +1,324 @@
+---
+title: "TADPOLE"
+author: "José Tamez-Peña"
+date: "October 20, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, echo = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, warning = FALSE, message = FALSE,comment = "#>")
+```
+
+```{r Libraries, echo = FALSE}
+
+library("epiR")
+library("FRESA.CAD")
+library(network)
+library(GGally)
+library("e1071")
+
+TADPOLE_BASIC <- read.delim("AllSubjectsWithBasicInfo.txt")
+TADPOLE_CROSSMRI <- read.delim("CompleMRIObs.txt",na.strings = c("NA","","#DIV/0!"))
+TADPOLE_predictors <- read.delim("PredictorsList.txt")
+rownames(TADPOLE_BASIC) <- as.character(TADPOLE_BASIC$IDTIME)
+rownames(TADPOLE_CROSSMRI) <- as.character(TADPOLE_CROSSMRI$ID_TP)
+
+
+```
+
+```{r subsets}
+months <- c(0,3,6,12,18,24,30,36,42,48,54,60,66,72,78,84,90,96,102,108,114,120)
+
+
+TRAIN_TADPOLEMRI <- subset(TADPOLE_CROSSMRI,TADPOLE_CROSSMRI$D1==1 & TADPOLE_CROSSMRI$D2==0)
+TRAIN_TADPOLEBASIC <- subset(TADPOLE_BASIC,TADPOLE_BASIC$D1==1 & TADPOLE_BASIC$D2==0)
+TEST_TADPOLEMRI <- subset(TADPOLE_CROSSMRI,TADPOLE_CROSSMRI$D2==1)
+TEST_TADPOLEBASIC <- subset(TADPOLE_BASIC,TADPOLE_BASIC$D2==1)
+
+
+
+
+```
+
+```{r Adjusting for age and ICV}
+
+
+TRAIN_TADPOLEMRI$cICV <- TRAIN_TADPOLEMRI$ICV^(1/3)
+TEST_TADPOLEMRI$cICV <- TEST_TADPOLEMRI$ICV^(1/3)
+
+rownames(TADPOLE_predictors) <- as.character(TADPOLE_predictors[,1])
+prednames <- as.character(TADPOLE_predictors[-c(1:17),1])
+
+TRAIN_TADPOLEMRI <- TRAIN_TADPOLEMRI[complete.cases(TRAIN_TADPOLEMRI[,prednames]),]
+CTest_TADPOLEMRI <- TEST_TADPOLEMRI[complete.cases(TEST_TADPOLEMRI[,prednames]),]
+ControlNormal <- subset(TRAIN_TADPOLEMRI,BXBL=="CN" & LastDX2=="NL" & LastVisit>2 & Month==0)
+ControlNormal2 <- subset(CTest_TADPOLEMRI,BXBL=="CN" & LastDX2=="NL" & LastVisit>2 & Month==0)
+ControlNormal <- rbind(ControlNormal,ControlNormal2)
+sum(ControlNormal$PTGENDER==1)
+sum(ControlNormal$PTGENDER==2)
+hist(ControlNormal$MeanT)
+hist(subset(ControlNormal,PTGENDER==1)$MeanT)
+hist(subset(ControlNormal,PTGENDER==2)$MeanT)
+
+trainTadploe.adj <- featureAdjustment(TADPOLE_predictors[prednames,], baseModel="1+AGE+cICV",data=TRAIN_TADPOLEMRI,referenceframe=ControlNormal,strata="PTGENDER", type = "LM", pvalue = 0.001)
+
+testTadploe.adj <- featureAdjustment(TADPOLE_predictors[prednames,], baseModel="1+AGE+cICV",data=CTest_TADPOLEMRI,referenceframe=ControlNormal,strata="PTGENDER", type = "LM", pvalue = 0.001)
+
+ControlNormal.adj <- featureAdjustment(TADPOLE_predictors[prednames,], baseModel="1+AGE+cICV",data=ControlNormal,referenceframe=ControlNormal,strata="PTGENDER", type = "LM", pvalue = 0.001)
+
+
+hist(subset(ControlNormal.adj,PTGENDER==1)$MeanT,breaks = 15)
+hist(subset(ControlNormal.adj,PTGENDER==2)$MeanT,breaks = 15)
+hist(subset(ControlNormal.adj,PTGENDER==1)$MeanSAD,breaks = 15)
+hist(subset(ControlNormal.adj,PTGENDER==2)$MeanSAD,breaks = 15)
+
+
+#testTadploe.norm <- rankInverseNormalDataFrame(TADPOLE_predictors[prednames,], testTadploe.adj, ControlNormal.adj,strata="PTGENDER")
+
+trainTadploe.norm <- rankInverseNormalDataFrame(TADPOLE_predictors[prednames,], trainTadploe.adj, ControlNormal.adj)
+testTadploe.norm <- rankInverseNormalDataFrame(TADPOLE_predictors[prednames,], testTadploe.adj, ControlNormal.adj)
+
+mean(testTadploe.norm$MeanT)
+mean(trainTadploe.norm$MeanT)
+mean(testTadploe.norm$MeanSAD)
+mean(trainTadploe.norm$MeanSAD)
+
+plot(testTadploe.norm$MeanT~testTadploe.adj$MeanT)
+plot(trainTadploe.norm$MeanT~trainTadploe.adj$MeanT)
+plot(testTadploe.norm$MeanSAD~testTadploe.adj$MeanSAD)
+plot(trainTadploe.norm$MeanSAD~trainTadploe.adj$MeanSAD)
+
+```
+
+
+```{r spliting by visit}
+
+VISIT_TRAINCROSSMRI <- list()
+VISIT_TRAINBASIC <- list()
+VISIT_TESTCROSSMRI <- list()
+VISIT_TESTBASIC <- list()
+i = 1;
+for (j in months )
+{
+  VISIT_TRAINCROSSMRI[[i]] <- subset(trainTadploe.adj,trainTadploe.adj$Month==j)
+  VISIT_TRAINBASIC[[i]] <- subset(TRAIN_TADPOLEBASIC,TRAIN_TADPOLEBASIC$Month2==j)
+  VISIT_TESTCROSSMRI[[i]] <- subset(testTadploe.adj,testTadploe.adj$Month==j)
+  VISIT_TESTBASIC[[i]] <- subset(TEST_TADPOLEBASIC,TEST_TADPOLEBASIC$Month2==j)
+  i = i + 1
+}
+sampledcolumns <- c("RID",as.character(TADPOLE_predictors[,1]));
+
+testLastTimePointWithNL <- subset(testTadploe.adj,LastComleteObs==1 & LastDX2=="NL")
+testLastTimePointWithMCI <- subset(testTadploe.adj,LastComleteObs==1 & LastDX2=="MCI")
+testLastTimePointWithAD <- subset(testTadploe.adj,LastComleteObs==1 & LastDX2=="Dementia")
+
+testWithNL <- subset(testTadploe.adj,LastDX2=="NL")
+testWithMCI <- subset(testTadploe.adj,LastDX2=="MCI")
+testWithAD <- subset(testTadploe.adj,LastDX2=="Dementia")
+
+checkIDs <- c(as.character(testLastTimePointWithNL$RID),as.character(testLastTimePointWithMCI$RID),as.character(testLastTimePointWithAD$RID))
+#write.csv(checkIDs,file="TestIDsWithCO.csv")
+
+
+```
+
+
+```{r univariate NL to AD}
+CASESNLtoAD <- NULL
+yearNLtoAD <- NULL
+controlYearNLtoAD <- NULL;
+CONTROLNLtoAD <- NULL
+
+basecolumns <- sampledcolumns[-c(1:7)]
+
+tmpss <-  subset(VISIT_TRAINCROSSMRI[[1]],NL_AD==1 & BDX==1)
+BLCASESNLtoAD <- tmpss[,basecolumns]
+tmpss <-  subset(VISIT_TESTCROSSMRI[[1]],NL_AD==1 & BDX==1)
+BLCASESNLtoAD <- rbind(BLCASESNLtoAD,tmpss[,basecolumns])
+
+tmpss <-  subset(VISIT_TRAINCROSSMRI[[1]],BXBL=="CN" & LastDX2=="NL" & LastVisit>3)
+BLCONTROLNLtoAD <- tmpss[,basecolumns]
+tmpss <-  subset(VISIT_TESTCROSSMRI[[1]],BXBL=="CN" & LastDX2=="NL" & LastVisit>3)
+BLCONTROLNLtoAD <- rbind(BLCONTROLNLtoAD,tmpss[,basecolumns])
+
+
+for (j in 1:length(VISIT_TRAINCROSSMRI) )
+{
+  tmpss <-  subset(VISIT_TRAINCROSSMRI[[j]],NL_AD==1 & BDX==1)
+  yearNLtoAD <- c(yearNLtoAD,(tmpss$YearNLtoAD))
+  CASESNLtoAD <- rbind(CASESNLtoAD,tmpss[,sampledcolumns])
+  tmpss <- subset(VISIT_TESTCROSSMRI[[j]],NL_AD==1 & BDX==1 )
+  yearNLtoAD <- c(yearNLtoAD,(tmpss$YearNLtoAD))
+  CASESNLtoAD <- rbind(CASESNLtoAD,tmpss[,sampledcolumns])
+
+  tmpss <- subset(VISIT_TRAINCROSSMRI[[j]],BXBL=="CN" & LastDX2=="NL" & LastVisit>3)
+  controlYearNLtoAD <- c(controlYearNLtoAD,(tmpss$YearNLtoAD))
+  CONTROLNLtoAD <- rbind(CONTROLNLtoAD,tmpss[,sampledcolumns])
+  tmpss <- subset(VISIT_TESTCROSSMRI[[j]],BXBL=="CN" & LastDX2=="NL" & LastVisit>3)
+  controlYearNLtoAD <- c(controlYearNLtoAD,(tmpss$YearNLtoAD))
+  CONTROLNLtoAD <- rbind(CONTROLNLtoAD,tmpss[,sampledcolumns])
+}
+
+CASESNLtoAD <- cbind(yearNLtoAD,CASESNLtoAD)
+CASESNLtoAD <- CASESNLtoAD[complete.cases(CASESNLtoAD),]
+CONTROLNLtoAD <- cbind(controlYearNLtoAD,CONTROLNLtoAD)
+CONTROLNLtoAD <- CONTROLNLtoAD[complete.cases(CONTROLNLtoAD),]
+
+
+
+NLAZUniRankFeaturesRaw <- univariateRankVariables(variableList = TADPOLE_predictors,
+	                                            formula = "yearNLtoAD ~ 1",
+	                                            Outcome = "yearNLtoAD",
+	                                            data = CASESNLtoAD, 
+	                                            categorizationType = "Raw", 
+	                                            type = "LM", 
+	                                            rankingTest = "Ztest",
+	                                            description = "Description",
+                                               uniType="Regression")
+
+```
+
+
+```{r Modeling NL to AD}
+
+ids <- unique(as.character(CASESNLtoAD$RID))
+NLtoAD <- list();
+baggedformula <- character();
+baggedformula2 <- character();
+for (n in 1:100)
+{
+  singlecaseNLtoAD <- NULL;
+  for (i in ids)
+  {
+    case1 <- subset(CASESNLtoAD,RID==i)
+    caserows <- nrow(case1)
+    if (caserows>1)
+    {
+      singlecaseNLtoAD <- rbind(singlecaseNLtoAD,case1[sample(caserows, 1),])
+    }
+    else
+    {
+      singlecaseNLtoAD <- rbind(singlecaseNLtoAD,case1)
+    }
+  }
+  singlecaseNLtoAD$RID <- NULL;
+  print(nrow(singlecaseNLtoAD))
+  system.time(NLtoAD[[n]] <- FRESA.Model(yearNLtoAD ~ 1,singlecaseNLtoAD))
+  if (length(NLtoAD[[n]]$bagging$bagged.model$coefficients)>1)
+  {
+    baggedformula <- append(baggedformula,NLtoAD[[n]]$bagging$formula)
+  }
+  if (length(NLtoAD[[n]]$BSWiMS.model$coefficients)>1)
+  {
+    baggedformula2 <- append(baggedformula2,NLtoAD[[n]]$BSWiMS.model$formula)
+  }
+}
+save(NLtoAD,file="NLtoAD.RDATA")
+mp <- medianPredict(baggedformula,CASESNLtoAD,predictType ="linear",type="LM")
+plot(CASESNLtoAD$yearNLtoAD~mp$medianPredict)
+cor.test(CASESNLtoAD$yearNLtoAD,mp$medianPredict)
+
+bgmod <- baggedModel(as.character(baggedformula2),CASESNLtoAD,type="LM",univariate=NLtoAD[[1]]$univariateAnalysis)
+barplot(bgmod$frequencyTable)
+mpb <- medianPredict(bgmod$formula,CASESNLtoAD,predictType ="linear",type="LM")
+plot(CASESNLtoAD$yearNLtoAD~mpb$medianPredict)
+cor.test(CASESNLtoAD$yearNLtoAD,mpb$medianPredict)
+
+testLastTimePointWithNL$yearNLtoAD <- numeric(nrow(testLastTimePointWithNL))
+mp <- medianPredict(baggedformula,CASESNLtoAD,testLastTimePointWithNL,predictType ="linear",type="LM")
+cdft <- NULL
+x <- (1:60)/12
+for (i in 1:nrow(mp$predictions))
+{
+  fn <- ecdf(as.numeric(mp$predictions[i,-1]))
+  cdft <- rbind(cdft,fn(x))
+}
+rownames(cdft) <- rownames(mp$predictions)
+write.csv(cdft,file="NLtoADTimeCDF.csv")
+write.csv(mp$predictions,file="NLtoADTimePrediction.csv")
+
+```
+
+```{r predicting CN to AD conversion}
+
+classNLtoAD <- CASESNLtoAD;
+classNLtoAD$yearNLtoAD <- NULL
+classNLtoAD$Event <- 1
+cclassNLtoAD <- CONTROLNLtoAD
+cclassNLtoAD$controlYearNLtoAD <- NULL
+cclassNLtoAD$Event <- 0
+
+samplecontrol <- sample(nrow(cclassNLtoAD),nrow(cclassNLtoAD)/2)
+#sampletrain <- sample(nrow(classNLtoAD),4*nrow(classNLtoAD)/5)
+#trainDataNLtoAD <- rbind(classNLtoAD[sampletrain,],cclassNLtoAD[samplecontrol,])
+trainDataNLtoAD <- rbind(classNLtoAD,cclassNLtoAD[samplecontrol,])
+testDataNLtoAD <- rbind(classNLtoAD,cclassNLtoAD[-samplecontrol,])
+
+ids <- unique(as.character(trainDataNLtoAD$RID))
+PreNLtoAD <- list();
+baggedformula <- character();
+baggedformula2 <- character();
+for (n in 1:25)
+{
+  singlecaseNLtoAD <- NULL;
+  for (i in ids)
+  {
+    case1 <- subset(trainDataNLtoAD,RID==i)
+    caserows <- nrow(case1)
+    if (caserows>1)
+    {
+      singlecaseNLtoAD <- rbind(singlecaseNLtoAD,case1[sample(caserows, 1),])
+    }
+    else
+    {
+      singlecaseNLtoAD <- rbind(singlecaseNLtoAD,case1)
+    }
+  }
+  singlecaseNLtoAD$RID <- NULL;
+  system.time(PreNLtoAD[[n]] <- FRESA.Model(Event ~ 1,singlecaseNLtoAD))
+}
+save(PreNLtoAD,file="LogitLNtoAD.RDATA")
+for (n in 1:25)
+{
+  if (length(PreNLtoAD[[n]]$bagging$bagged.model$coefficients)>1)
+  {
+    baggedformula <- append(baggedformula,PreNLtoAD[[n]]$bagging$formula)
+  }
+  if (length(PreNLtoAD[[n]]$BSWiMS.model$coefficients)>1)
+  {
+    baggedformula2 <- append(baggedformula2,PreNLtoAD[[n]]$BSWiMS.model$formula)
+  }
+}
+bgmod <- baggedModel(as.character(baggedformula2),trainDataNLtoAD,type="LOGIT",univariate=PreNLtoAD[[1]]$univariateAnalysis)
+barplot(bgmod$frequencyTable)
+mpb <- medianPredict(bgmod$formula,trainDataNLtoAD,predictType ="linear",type="LOGIT")
+pm2b <- plotModels.ROC(mpb$predictions,main="Bagging",cex=0.90)
+
+mptb <- medianPredict(bgmod$formula,trainDataNLtoAD,testDataNLtoAD,predictType ="linear",type="LOGIT")
+pm2tb <- plotModels.ROC(mptb$predictions,main="Bagging",cex=0.90)
+
+mptb <- medianPredict(bgmod$formula,trainDataNLtoAD,testDataNLtoAD,predictType ="linear",type="SVM")
+mptb$predictions$V2 <- mptb$predictions$V2 -0.5
+pm2tb <- plotModels.ROC(mptb$predictions,main="SVN",cex=0.90)
+
+mp2 <- medianPredict(as.character(baggedformula2),trainDataNLtoAD,testDataNLtoAD,predictType ="linear",type="LOGIT")
+pm2 <- plotModels.ROC(mp2$predictions,main="Bagging",cex=0.90)
+
+mp3 <- medianPredict(as.character(baggedformula),trainDataNLtoAD,testDataNLtoAD,predictType ="linear",type="LOGIT")
+pm3 <- plotModels.ROC(mp3$predictions,main="Bagging",cex=0.90)
+
+mps3 <- medianPredict(as.character(baggedformula),trainDataNLtoAD,testDataNLtoAD,predictType ="linear",type="SVM")
+mps3$predictions[,2:26] <- mps3$predictions[,2:26] -0.5
+pms3 <- plotModels.ROC(mp3$predictions,main="SVM",cex=0.90)
+
+
+testLastTimePointWithNL$Event <- rep(0,nrow(testLastTimePointWithNL))
+predictionNormalsToAD <- medianPredict(as.character(baggedformula2),trainDataNLtoAD,testLastTimePointWithNL,predictType ="prob",type="LOGIT")
+write.csv(predictionNormalsToAD$medianPredict,file="ADFromNormalPrediction.csv")
+
+```
+
+

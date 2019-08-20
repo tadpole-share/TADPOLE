@@ -1,0 +1,414 @@
+---
+title: "TADPOLE"
+author: "José Tamez-Peña"
+date: "October 20, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, echo = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, warning = FALSE, message = FALSE,comment = "#>")
+```
+
+```{r Libraries, echo = FALSE}
+
+library("epiR")
+library("FRESA.CAD")
+library(network)
+library(GGally)
+library("e1071")
+
+TADPOLE_BASIC <- read.delim("AllSubjectsWithBasicInfo.txt")
+TADPOLE_CROSSMRI <- read.delim("CompleMRIObs.txt",na.strings = c("NA","","#DIV/0!"))
+TADPOLE_predictors <- read.delim("PredictorsList.txt")
+rownames(TADPOLE_BASIC) <- as.character(TADPOLE_BASIC$IDTIME)
+rownames(TADPOLE_CROSSMRI) <- as.character(TADPOLE_CROSSMRI$ID_TP)
+
+
+```
+
+
+```{r subsets}
+months <- c(0,3,6,12,18,24,30,36,42,48,54,60,66,72,78,84,90,96,102,108,114,120)
+
+
+TRAIN_TADPOLEMRI <- subset(TADPOLE_CROSSMRI,TADPOLE_CROSSMRI$D1==1)
+TRAIN_TADPOLEBASIC <- subset(TADPOLE_BASIC,TADPOLE_BASIC$D1==1)
+
+
+```
+
+
+
+```{r imputescoreData}
+print(sum(is.na(TADPOLE_CROSSMRI)))
+toimputeNA <- c("RID","APOE4","CDRSB","ADAS11","ADAS13","MMSE","RAVLT_immediate","RAVLT_learning","RAVLT_forgetting","RAVLT_perc_forgetting","FAQ")
+basictoImpute <- TADPOLE_BASIC[,toimputeNA]
+rownames(basictoImpute) <- TADPOLE_BASIC$IDTIME
+ids <- unique(basictoImpute$RID)
+print(sum(is.na(basictoImpute)))
+for (id in ids)
+{
+  setid <- subset(basictoImpute,RID==id)
+  setrows <- nrow(setid)
+#  print(id)
+  if (setrows>1)
+  {
+    for (var in toimputeNA[-1])
+    {
+      if (is.na(setid[1,var]))
+      {
+        setid[1,var] <- setid[2,var];
+      }
+      for (n in 2:setrows)
+      {
+        if (n<setrows)
+        {
+         if (is.na(setid[n,var]))
+         {
+           mv <- mean(c(setid[n-1,var],setid[n+1,var]),na.rm=TRUE)
+           if (length(mv)>0)
+           {
+            setid[n,var] <- mv
+           }
+         }
+        }
+        else
+        {
+         if (is.na(setid[n,var]))
+         {
+            setid[n,var] <- setid[n-1,var]
+         }
+        }
+      }
+    }
+  }
+  basictoImpute[rownames(setid),] <- setid
+#  print(setid)
+}
+print(sum(is.na(basictoImpute)))
+rownames(TADPOLE_CROSSMRI) <- TADPOLE_CROSSMRI$ID_TP
+
+TADPOLE_CROSSMRI[,toimputeNA[-1]] <- basictoImpute[rownames(TADPOLE_CROSSMRI),toimputeNA[-1]]
+
+print(subset(TADPOLE_CROSSMRI,RID==5160)[,toimputeNA[-1]])
+
+
+
+toimputeNA <- c("RID","Ventricle_ICV","ICV")
+basictoImpute <- TADPOLE_CROSSMRI[,toimputeNA]
+rownames(basictoImpute) <- TADPOLE_CROSSMRI$ID_TP
+ids <- unique(basictoImpute$RID)
+print(sum(is.na(basictoImpute)))
+for (id in ids)
+{
+  setid <- subset(basictoImpute,RID==id)
+  setrows <- nrow(setid)
+#  print(id)
+  if (setrows>1)
+  {
+    for (var in toimputeNA[-1])
+    {
+      if (is.na(setid[1,var]))
+      {
+        setid[1,var] <- setid[2,var];
+      }
+      for (n in 2:setrows)
+      {
+        if (n<setrows)
+        {
+         if (is.na(setid[n,var]))
+         {
+           mv <- mean(c(setid[n-1,var],setid[n+1,var]),na.rm=TRUE)
+           if (length(mv)>0)
+           {
+            setid[n,var] <- mv
+           }
+         }
+        }
+        else
+        {
+         if (is.na(setid[n,var]))
+         {
+            setid[n,var] <- setid[n-1,var]
+         }
+        }
+      }
+    }
+  }
+  basictoImpute[rownames(setid),] <- setid
+#  print(setid)
+}
+print(sum(is.na(basictoImpute)))
+TADPOLE_CROSSMRI[,toimputeNA[-1]] <- basictoImpute[rownames(TADPOLE_CROSSMRI),toimputeNA[-1]]
+print(sum(is.na(TADPOLE_CROSSMRI)))
+
+```
+
+```{r subsets}
+TEST_TADPOLEMRI <- subset(TADPOLE_CROSSMRI,TADPOLE_CROSSMRI$D2==1)
+TEST_TADPOLEBASIC <- subset(TADPOLE_BASIC,TADPOLE_BASIC$D2==1)
+
+
+
+```
+
+
+```{r Adjusting for age and ICV}
+
+
+TRAIN_TADPOLEMRI$cICV <- TRAIN_TADPOLEMRI$ICV^(1/3)
+TEST_TADPOLEMRI$cICV <- TEST_TADPOLEMRI$ICV^(1/3)
+
+rownames(TADPOLE_predictors) <- as.character(TADPOLE_predictors[,1])
+prednames <- as.character(TADPOLE_predictors[-c(1:17),1])
+TRAIN_TADPOLEMRI <- TRAIN_TADPOLEMRI[complete.cases(TRAIN_TADPOLEMRI[,prednames]),]
+ControlNormal <- subset(TRAIN_TADPOLEMRI,BXBL=="CN" & LastDX2=="NL" & LastVisit>2 & Month==0 & Train==1)
+sum(ControlNormal$PTGENDER==1)
+sum(ControlNormal$PTGENDER==2)
+hist(ControlNormal$MeanT)
+hist(subset(ControlNormal,PTGENDER==1)$MeanT)
+hist(subset(ControlNormal,PTGENDER==2)$MeanT)
+
+trainTadploe.adj <- featureAdjustment(TADPOLE_predictors[prednames,], baseModel="1+AGE+cICV",data=TRAIN_TADPOLEMRI,referenceframe=ControlNormal,strata="PTGENDER", type = "LM", pvalue = 0.001)
+
+testTadploe.adj <- featureAdjustment(TADPOLE_predictors[prednames,], baseModel="1+AGE+cICV",data=TEST_TADPOLEMRI,referenceframe=ControlNormal,strata="PTGENDER", type = "LM", pvalue = 0.001)
+
+ControlNormal.adj <- featureAdjustment(TADPOLE_predictors[prednames,], baseModel="1+AGE+cICV",data=ControlNormal,referenceframe=ControlNormal,strata="PTGENDER", type = "LM", pvalue = 0.001)
+
+
+hist(subset(ControlNormal.adj,PTGENDER==1)$MeanT,breaks = 15)
+hist(subset(ControlNormal.adj,PTGENDER==2)$MeanT,breaks = 15)
+hist(subset(ControlNormal.adj,PTGENDER==1)$MeanSAD,breaks = 15)
+hist(subset(ControlNormal.adj,PTGENDER==2)$MeanSAD,breaks = 15)
+
+
+#testTadploe.norm <- rankInverseNormalDataFrame(TADPOLE_predictors[prednames,], testTadploe.adj, ControlNormal.adj,strata="PTGENDER")
+
+trainTadploe.norm <- rankInverseNormalDataFrame(TADPOLE_predictors[prednames,], trainTadploe.adj, ControlNormal.adj,strata="PTGENDER")
+testTadploe.norm <- rankInverseNormalDataFrame(TADPOLE_predictors[prednames,], testTadploe.adj, ControlNormal.adj,strata="PTGENDER")
+
+mean(testTadploe.norm$MeanT)
+mean(trainTadploe.norm$MeanT)
+mean(testTadploe.norm$MeanSAD)
+mean(trainTadploe.norm$MeanSAD)
+
+plot(testTadploe.norm$MeanT~testTadploe.adj$MeanT)
+plot(trainTadploe.norm$MeanT~trainTadploe.adj$MeanT)
+plot(testTadploe.norm$MeanSAD~testTadploe.adj$MeanSAD)
+plot(trainTadploe.norm$MeanSAD~trainTadploe.adj$MeanSAD)
+
+```
+
+
+```{r spliting by visit}
+
+VISIT_TRAINCROSSMRI <- list()
+VISIT_TRAINBASIC <- list()
+VISIT_TESTCROSSMRI <- list()
+VISIT_TESTBASIC <- list()
+i = 1;
+for (j in months )
+{
+  VISIT_TRAINCROSSMRI[[i]] <- subset(trainTadploe.norm,Month==j)
+  VISIT_TRAINBASIC[[i]] <- subset(TRAIN_TADPOLEBASIC,Month2==j)
+  VISIT_TESTCROSSMRI[[i]] <- subset(testTadploe.norm,Month==j)
+  VISIT_TESTBASIC[[i]] <- subset(TEST_TADPOLEBASIC,Month2==j)
+  i = i + 1
+}
+sampledcolumns <- c("RID",as.character(TADPOLE_predictors[,1]));
+
+testLastTimePointWithNL <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="NL")[,sampledcolumns]
+testLastTimePointWithMCI <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="MCI")[,sampledcolumns]
+testLastTimePointWithAD <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="Dementia")[,sampledcolumns]
+
+testLastTimePointWithMCI["55_41030",]
+
+testWithNL <- subset(testTadploe.norm,LastDX2=="NL")[,sampledcolumns]
+testWithMCI <- subset(testTadploe.norm,LastDX2=="MCI")[,sampledcolumns]
+testWithAD <- subset(testTadploe.norm,LastDX2=="Dementia")[,sampledcolumns]
+
+#checkIDs <- c(as.character(testLastTimePointWithNL$RID),as.character(testLastTimePointWithMCI$RID),as.character(testLastTimePointWithAD$RID))
+#write.csv(checkIDs,file="TestIDsWithCO.csv")
+
+
+```
+
+```{r case Control sets}
+CASESNLtoAD <- NULL
+CONTROLNLtoAD <- NULL;
+
+for (j in 1:length(VISIT_TRAINCROSSMRI) )
+{
+  tmpss <-  subset(VISIT_TRAINCROSSMRI[[j]],NL_AD==1 & BDX==1 & YearNLtoAD<=5)
+  CASESNLtoAD <- rbind(CASESNLtoAD,tmpss[,sampledcolumns])
+
+  tmpss <- subset(VISIT_TRAINCROSSMRI[[j]],BXBL=="CN" & LastDX2=="NL" & LastVisit>=5.0 & BDX==1)
+  CONTROLNLtoAD <- rbind(CONTROLNLtoAD,tmpss[,sampledcolumns])
+}
+
+CASESNLtoAD <- CASESNLtoAD[complete.cases(CASESNLtoAD),]
+CONTROLNLtoAD <- CONTROLNLtoAD[complete.cases(CONTROLNLtoAD),]
+
+
+
+```
+
+```{r predicting NL to AD conversion}
+
+numberofRepp = 11
+numberOfTrials = 9
+case_classNLtoAD <- CASESNLtoAD
+case_classNLtoAD$Event <- 1
+control_classNLtoAD <- CONTROLNLtoAD
+control_classNLtoAD$Event <- 0
+fulltrain <-rbind(case_classNLtoAD,control_classNLtoAD)
+fulltrain <- fulltrain[complete.cases(fulltrain),] 
+testLastTimePointWithNL$Event <- rep(0,nrow(testLastTimePointWithNL))
+testWithNL$Event <- rep(0,nrow(testWithNL))
+logitauc <- NULL;
+svmauc <- NULL;
+allformulas <- character();
+alltestPredictions <- NULL
+repp <- 1
+
+for (repp in 1:numberofRepp)
+{
+  
+  ids <- unique(as.character(case_classNLtoAD$RID))
+  sampleCasesIDS_NLtoAD <- ids[sample(length(ids),19*length(ids)/20)]
+  save(sampleCasesIDS_NLtoAD,file=paste("sampleCasesIDS_NLtoAD",numberOfTrials,repp,".RDATA",sep="_"));
+  ids <- unique(as.character(control_classNLtoAD$RID))
+  sampleControlsIDS_NLtoAD <- ids[sample(length(ids),0.5*length(ids))]
+  save(sampleControlsIDS_NLtoAD,file=paste("sampleControlsIDS_NLtoAD",numberOfTrials,repp,".RDATA",sep="_"));
+  
+  
+  trainDataNLtoAD <- rbind(subset(case_classNLtoAD,RID %in% sampleCasesIDS_NLtoAD),
+                            subset(control_classNLtoAD,RID %in% sampleControlsIDS_NLtoAD))
+  testDataNLtoAD <- rbind(subset(case_classNLtoAD,!(RID %in% sampleCasesIDS_NLtoAD)),
+                            subset(control_classNLtoAD,!(RID %in% sampleControlsIDS_NLtoAD)))
+  
+  trainDataNLtoAD$BDX <- NULL
+  trainDataNLtoAD <- trainDataNLtoAD[complete.cases(trainDataNLtoAD),]
+  testDataNLtoAD <- testDataNLtoAD[complete.cases(testDataNLtoAD),]
+  
+  
+  ids <- unique(as.character(trainDataNLtoAD$RID))
+  preNLtoAD  <- list();
+  #load(file="preNLtoAD.RDATA")
+  n=1
+  sys_times <- NULL;
+  for (n in 1:numberOfTrials)
+  {
+    singlecaseNLtoAD <- NULL;
+    for (i in ids)
+    {
+      case1 <- subset(trainDataNLtoAD,RID==i)
+      caserows <- nrow(case1)
+      if (caserows>1)
+      {
+        singlecaseNLtoAD <- rbind(singlecaseNLtoAD,case1[sample(caserows, 1),])
+      }
+      else
+      {
+        singlecaseNLtoAD <- rbind(singlecaseNLtoAD,case1)
+      }
+    }
+    singlecaseNLtoAD$RID <- NULL;
+    singlecaseNLtoAD$BDX <- NULL;
+    print(sum(singlecaseNLtoAD$Event))
+    print(sum(singlecaseNLtoAD$Event==0))
+    sys_times <- rbind(sys_times,system.time(preNLtoAD[[n]] <- FRESA.Model(Event ~ 1,singlecaseNLtoAD)))
+  }
+  save(sys_times,file=paste("sys_times_preNLtoAD",numberOfTrials,repp,".RDATA",sep="_"))
+  save(preNLtoAD,file=paste("preNLtoAD",numberOfTrials,repp,".RDATA",sep="_"))
+  
+#  load(file=paste("preNLtoAD",numberOfTrials,repp,".RDATA",sep="_"))
+#  sum(is.na(testWithNL))
+#  pr <- predict(preNLtoAD[[n]]$BSWiMS.model,testWithNL)
+#  load(file=paste("sampleCasesIDS_NLtoAD2",numberOfTrials,repp,".RDATA",sep="_"))
+#  load(file=paste("sampleControlsIDS_NLtoAD2",numberOfTrials,repp,".RDATA",sep="_"))
+#  trainDataNLtoAD <- rbind(subset(case_classNLtoAD,RID %in% sampleCasesIDS_NLtoAD),
+#                            subset(control_classNLtoAD,RID %in% sampleControlsIDS_NLtoAD))
+#  testDataNLtoAD <- rbind(subset(case_classNLtoAD,!(RID %in% sampleCasesIDS_NLtoAD)),
+#                            subset(control_classNLtoAD,!(RID %in% sampleControlsIDS_NLtoAD)))
+#  trainDataNLtoAD <- trainDataNLtoAD[complete.cases(trainDataNLtoAD),]
+#  testDataNLtoAD <- testDataNLtoAD[complete.cases(testDataNLtoAD),]
+  
+#  trainDataNLtoAD$YearNLtoAD <- NULL
+#  trainDataNLtoAD$BDX <- NULL
+  
+  baggedformula <- character();
+  baggedformula2 <- character();
+  for (n in 1:numberOfTrials)
+  {
+    if (length(preNLtoAD[[n]]$bagging$bagged.model$coefficients)>1)
+    {
+      baggedformula <- append(baggedformula,preNLtoAD[[n]]$bagging$formula)
+    }
+    if (length(preNLtoAD[[n]]$BSWiMS.model$coefficients)>1)
+    {
+      baggedformula2 <- append(baggedformula2,preNLtoAD[[n]]$BSWiMS.model$formula)
+    }
+  }
+
+  mp2 <- medianPredict(as.character(baggedformula2),trainDataNLtoAD,testDataNLtoAD,predictType ="prob",type="LOGIT")
+  alltestPredictions <- rbind(alltestPredictions,cbind(testDataNLtoAD$Event,mp2$medianPredict))
+  pm2 <- plotModels.ROC(mp2$predictions,main="Bagging",cex=0.90)
+  logitauc <- append(logitauc,pm2$ensemble.auc)
+  
+  mpS2 <- medianPredict(as.character(baggedformula2),trainDataNLtoAD,testDataNLtoAD,type="SVM")
+  mpS2$predictions[-1] <- mpS2$predictions[-1] - 0.5
+  pmS2 <- plotModels.ROC(mpS2$predictions,main="SVM",cex=0.90)
+  svmauc <- append(svmauc,pmS2$ensemble.auc)
+  
+  print(logitauc)
+  print(svmauc)
+
+
+  predictionNLtoAD <- medianPredict(as.character(baggedformula2),fulltrain,testLastTimePointWithNL,predictType ="prob",type="SVM")
+  write.csv(predictionNLtoAD$medianPredict,file=paste(repp,"ADFromNLtoADPrediction.csv",sep="_"))
+  
+  predictionAllNLtoAD <- medianPredict(as.character(baggedformula2),fulltrain,testWithNL,predictType ="prob",type="SVM")
+  
+  write.csv(predictionAllNLtoAD$medianPredict,file=paste(repp,"ALLADFromNLtoADPrediction.csv",sep="_"))
+  write.csv(predictionAllNLtoAD$predictions,file=paste(repp,"ALLPredADFromNLtoADPrediction.csv",sep="_"))
+
+  predictionNLtoAD <- medianPredict(as.character(baggedformula2),fulltrain,testLastTimePointWithNL,predictType ="prob",type="LOGIT")
+  write.csv(predictionNLtoAD$medianPredict,file=paste(repp,"LOGITADFromNLtoADPrediction.csv",sep="_"))
+  
+  logpredictionAllNLtoAD <- medianPredict(as.character(baggedformula2),fulltrain,testWithNL,predictType ="prob",type="LOGIT")
+  
+  write.csv(logpredictionAllNLtoAD$medianPredict,file=paste(repp,"LogitALLADFromNLtoADPrediction.csv",sep="_"))
+  write.csv(logpredictionAllNLtoAD$predictions,file=paste(repp,"LogitALLPredADFromNLtoADPrediction.csv",sep="_"))
+  allformulas <- append(allformulas,as.character(baggedformula2))
+  
+}
+
+pm2 <- plotModels.ROC(alltestPredictions,main="All Tests",cex=0.90)
+
+barplot(svmauc)
+barplot(logitauc)
+pluscts <- str_count(allformulas,"\\+")
+write.csv(allformulas,file=paste(repp,"AllFormulasFinalNLtoADPred.csv",sep="_"))
+
+logpredictionAllNLtoAD <- medianPredict(allformulas,fulltrain,testWithNL,predictType ="prob",type="LOGIT")
+  
+write.csv(logpredictionAllNLtoAD$medianPredict,file=paste(repp,"FINAL_LogitALLADFromNLtoADPrediction.csv",sep="_"))
+write.csv(logpredictionAllNLtoAD$predictions,file=paste(repp,"FINAL_LogitALLPredADFromNLtoADPrediction.csv",sep="_"))
+
+predictionNLtoAD <- medianPredict(allformulas,fulltrain,testLastTimePointWithNL,predictType ="prob",type="LOGIT")
+write.csv(predictionNLtoAD$medianPredict,file=paste(repp,"FINAL_LOGITADFromNLtoADPrediction.csv",sep="_"))
+
+logpredictionAllNLtoAD <- medianPredict(allformulas,fulltrain,testWithNL,type="SVM")
+  
+write.csv(logpredictionAllNLtoAD$medianPredict,file=paste(repp,"FINAL_SVMALLADFromNLtoADPrediction.csv",sep="_"))
+write.csv(logpredictionAllNLtoAD$predictions,file=paste(repp,"FINAL_SVMALLPredADFromNLtoADPrediction.csv",sep="_"))
+
+predictionNLtoAD <- medianPredict(allformulas,fulltrain,testLastTimePointWithNL,type="SVM")
+write.csv(predictionNLtoAD$medianPredict,file=paste(repp,"FINAL_SVMADFromNLtoADPrediction.csv",sep="_"))
+
+```
+

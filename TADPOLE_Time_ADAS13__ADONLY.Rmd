@@ -1,0 +1,241 @@
+---
+title: "TADPOLE"
+author: "José Tamez-Peña"
+date: "October 20, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, echo = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, warning = FALSE, message = FALSE,comment = "#>")
+```
+
+```{r Libraries, echo = FALSE}
+
+library("epiR")
+library("FRESA.CAD")
+library(network)
+library(GGally)
+library("e1071")
+
+TADPOLE_predictors <- read.delim("PredictorsList.txt")
+
+load(file="D3Imputed.RDATA")
+load(file="TEST_TADPOLEMRI.RDATA")
+load(file="TRAIN_TADPOLEMRI.RDATA")
+load(file="trainTadploe.norm.RDATA")
+load(file="testTadploe.norm.RDATA")
+load(file="D3.norm.RDATA")
+
+```
+
+```{r spliting by visit}
+months <- c(0,3,6,12,18,24,30,36,42,48,54,60,66,72,78,84,90,96,102,108,114,120)
+
+VISIT_TRAINCROSSMRI <- list()
+VISIT_TESTCROSSMRI <- list()
+i = 1;
+for (j in months )
+{
+  VISIT_TRAINCROSSMRI[[i]] <- subset(trainTadploe.norm,Month==j)
+  VISIT_TESTCROSSMRI[[i]] <- subset(testTadploe.norm,Month==j)
+  i = i + 1
+}
+sampledcolumns <- c("RID",as.character(TADPOLE_predictors[,1]));
+
+testLastTimePointWithNL <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="NL")[,sampledcolumns]
+testLastTimePointWithMCI <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="MCI")[,sampledcolumns]
+testLastTimePointWithAD <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="Dementia")[,sampledcolumns]
+
+trainLastTimePointWithNL <- subset(trainTadploe.norm,LastCompleteObs==1 & LastDX2=="NL")
+trainLastTimePointWithMCI <- subset(trainTadploe.norm,LastCompleteObs==1 & LastDX2=="MCI")
+trainLastTimePointWithAD <- subset(trainTadploe.norm,LastCompleteObs==1 & LastDX2=="Dementia")
+rownames(trainLastTimePointWithAD) <- trainLastTimePointWithAD$RID
+
+
+testWithNL <- subset(testTadploe.norm,LastDX2=="NL")[,sampledcolumns]
+testWithMCI <- subset(testTadploe.norm,LastDX2=="MCI")[,sampledcolumns]
+testWithAD <- subset(testTadploe.norm,LastDX2=="Dementia")[,sampledcolumns]
+
+```
+
+
+```{r univariate Ventricle ICV to Dementia}
+CASESAD <- NULL
+Last_OBS_ADAS13 <- NULL
+timeToLastObservation <- NULL
+j=1
+
+for (j in 1:length(VISIT_TRAINCROSSMRI) )
+{
+  tmpss <-  subset(VISIT_TRAINCROSSMRI[[j]],BDX==3 & LastCompleteObs==0)
+  rids <- as.character(tmpss$RID)
+  DADAS13 <- trainLastTimePointWithAD[rids,"ADAS13"]-tmpss$ADAS13
+  timetolast <- trainLastTimePointWithAD[rids,"Years_bl"]-tmpss$Years_bl;
+  CASESAD <- rbind(CASESAD,cbind(DADAS13,timetolast,tmpss[,sampledcolumns]))
+}
+
+hist(CASESAD$DADAS13)
+CASESAD <- CASESAD[complete.cases(CASESAD),]
+CASESAD$ICV <- NULL
+CASESAD$ADAS13 <- NULL
+CASESAD$timetolast2 <- CASESAD$timetolast*CASESAD$timetolast
+CASESAD$timetolast3 <- log(CASESAD$timetolast)
+CASESAD$timetolast_MMSE <- CASESAD$MMSE*log(CASESAD$timetolast)
+CASESAD$timetolast_BDX <- CASESAD$BDX*log(CASESAD$timetolast)
+TADPOLE_predictors <- read.delim("PredictorsList.txt")
+
+rownames(TADPOLE_predictors) <- TADPOLE_predictors$Var
+TADPOLE_predictors <- subset(TADPOLE_predictors,Var != "ADAS13")
+TADPOLE_predictors <- subset(TADPOLE_predictors,Var != "ICV")
+
+timename <- c("timetolast","timetolast")
+names(timename) <- colnames(TADPOLE_predictors)
+TADPOLE_predictors <- rbind(t(timename),TADPOLE_predictors)
+timename <- c("timetolast2","timetolast2")
+names(timename) <- colnames(TADPOLE_predictors)
+TADPOLE_predictors <- rbind(t(timename),TADPOLE_predictors)
+timename <- c("timetolast3","timetolast3")
+names(timename) <- colnames(TADPOLE_predictors)
+TADPOLE_predictors <- rbind(t(timename),TADPOLE_predictors)
+timename <- c("timetolast_MMSE","timetolast_MMSE")
+names(timename) <- colnames(TADPOLE_predictors)
+TADPOLE_predictors <- rbind(t(timename),TADPOLE_predictors)
+timename <- c("timetolast_BDX","timetolast_BDX")
+names(timename) <- colnames(TADPOLE_predictors)
+TADPOLE_predictors <- rbind(t(timename),TADPOLE_predictors)
+
+ADAS13_RankFeaturesRaw <- univariateRankVariables(variableList = TADPOLE_predictors,
+	                                            formula = "DADAS13 ~ 1",
+	                                            Outcome = "DADAS13",
+	                                            data = CASESAD, 
+	                                            categorizationType = "Raw", 
+	                                            type = "LM", 
+	                                            rankingTest = "Ztest",
+	                                            description = "Description",
+                                               uniType="Regression")
+
+```
+
+
+```{r Modeling ADAS13 time in AD}
+compute = TRUE
+numberofRepp = 5
+numberofFolds = 5
+numberOfTrials = 5
+allformulas <- character();
+logitcor <- numeric();
+logitMAD <- numeric();
+
+testWithAD$ADAS13 <- numeric(nrow(testWithAD))
+alltestpredicts <- NULL
+allD3predicts <- NULL
+repp = 1
+for ( repp in 1:numberofRepp)
+{
+
+  ids_ca <- unique(as.character(CASESAD$RID))
+	casefolds <- cvTools::cvFolds(length(ids_ca), numberofFolds,1, "random");
+	
+	 j=1
+	for (j in 1:numberofFolds)
+	{
+
+	  sampleIDS_TimeADAS13 <- ids_ca[casefolds$subsets[casefolds$which != j,]];
+
+    trainTime_ADAS13 <- subset(CASESAD,RID %in% sampleIDS_TimeADAS13)
+    testTime_ADAS13 <- subset(CASESAD,!(RID %in% sampleIDS_TimeADAS13))
+    testD3 <- subset(D3.norm,!(RID %in% sampleIDS_TimeADAS13))
+    testD3$ADAS13 <- rep(0,nrow(testD3))
+    
+    print(length(unique(as.character(trainTime_ADAS13$RID))))
+    print(length(unique(as.character(testTime_ADAS13$RID))))
+    
+    ids <- unique(as.character(trainTime_ADAS13$RID))
+    sys_times <- NULL;
+    Time_ADAS13 <- list();
+    n=1
+    hist(CASESAD$timetolast)
+    if (compute)
+    {
+      for (n in 1:numberOfTrials)
+      {
+        singlecaseTime_ADAS13 <- NULL;
+        for (i in ids)
+        {
+          case1 <- subset(trainTime_ADAS13,RID==i)
+          caserows <- nrow(case1)
+          if (caserows>1)
+          {
+            singlecaseTime_ADAS13 <- rbind(singlecaseTime_ADAS13,case1[sample(caserows, 1),])
+          }
+          else
+          {
+            singlecaseTime_ADAS13 <- rbind(singlecaseTime_ADAS13,case1)
+          }
+        }
+        singlecaseTime_ADAS13$RID <- NULL;
+        print(nrow(singlecaseTime_ADAS13))
+        sys_times <- rbind(sys_times,system.time(Time_ADAS13[[n]] <- FRESA.Model(DADAS13 ~ 1,singlecaseTime_ADAS13)))
+        pr <- predict(Time_ADAS13[[n]]$BSWiMS.model,testTime_ADAS13)
+        cat("MAD:",mean(abs(pr-testTime_ADAS13$DADAS13)))
+        plot(pr~testTime_ADAS13$DADAS13)
+      }
+      save(sys_times,file=paste("sys_times_Time_ADAS13_AD",numberOfTrials,j,repp,".RDATA",sep="_"))
+      save(Time_ADAS13,file=paste("Time_ADAS13_AD",numberOfTrials,j,repp,".RDATA",sep="_"))
+    }
+    else
+    {
+      load(file=paste("Time_ADAS13_AD",numberOfTrials,j,repp,".RDATA",sep="_"))
+      sampleIDS_TimeADAS13 <- NULL;
+    }
+    
+    baggedformula <- character();
+    for (n in 1:numberOfTrials)
+    {
+      if (length(Time_ADAS13[[n]]$BSWiMS.model$coefficients)>1)
+      {
+        baggedformula <- append(baggedformula,Time_ADAS13[[n]]$BSWiMS.model$formula)
+      }
+      if (!compute)
+      {
+    	  idst <- unlist(str_split(rownames(Time_ADAS13[[n]]$bootstrappedModel$data),"_"))
+        sampleIDS_TimeADAS13 <- append(sampleIDS_TimeADAS13,idst[2*(0:(length(idst)-1))+1])
+      }
+    }
+    
+    if (!compute)
+    {
+    	sampleIDS_TimeADAS13 <- unique(sampleIDS_TimeADAS13)
+      trainTime_ADAS13 <- subset(CASESAD,(RID %in% sampleIDS_TimeADAS13))
+      testTime_ADAS13 <- subset(CASESAD,!(RID %in% sampleIDS_TimeADAS13))
+      
+      testD3 <- subset(D3.norm,!(RID %in% sampleIDS_TimeADAS13))
+      testD3$ADAS13 <- rep(0,nrow(testD3))
+    }
+
+    mp <- medianPredict(as.character(baggedformula),trainTime_ADAS13,testTime_ADAS13,predictType ="linear",type="LM")
+    alltestpredicts <- rbind(alltestpredicts,cbind(testTime_ADAS13$DADAS13,mp$medianPredict))
+    plot(testTime_ADAS13$DADAS13~mp$medianPredict)
+    ct <- cor.test(testTime_ADAS13$DADAS13,mp$medianPredict)
+    logitcor <- append(logitcor,ct$estimate)
+    res <- testTime_ADAS13$DADAS13-mp$medianPredict
+    logitMAD <- append(logitMAD,mean(abs(res)))
+    print(logitMAD)
+    print(logitcor)
+    allformulas <- append(allformulas,as.character(baggedformula))
+  }
+}
+
+bp <- boxplot(alltestpredicts[,2]~rownames(alltestpredicts),plot=FALSE)
+bpstatx <- bp$stats[3,]
+bp <- boxplot(alltestpredicts[,1]~rownames(alltestpredicts),plot=FALSE)
+bpstaty <- bp$stats[3,]
+plot(bpstaty~bpstatx,main="All Tests",xlim=c(-5,30),ylim=c(-5,30))
+ct <- cor.test(bpstaty,bpstatx)
+cat("MAD:",mean(abs(bpstaty-bpstatx)))
+
+
+```

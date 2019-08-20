@@ -1,0 +1,454 @@
+---
+title: "TADPOLE"
+author: "José Tamez-Peña"
+date: "October 20, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, echo = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, warning = FALSE, message = FALSE,comment = "#>")
+```
+
+```{r Libraries, echo = FALSE}
+
+library("epiR")
+library("FRESA.CAD")
+library(network)
+library(GGally)
+library("e1071")
+
+TADPOLE_BASIC <- read.delim("AllSubjectsWithBasicInfo.txt")
+TADPOLE_CROSSMRI <- read.delim("CompleMRIObs.txt",na.strings = c("NA","","#DIV/0!"))
+TADPOLE_predictors <- read.delim("PredictorsList.txt")
+rownames(TADPOLE_BASIC) <- as.character(TADPOLE_BASIC$IDTIME)
+rownames(TADPOLE_CROSSMRI) <- as.character(TADPOLE_CROSSMRI$ID_TP)
+
+
+```
+
+```{r subsets}
+months <- c(0,3,6,12,18,24,30,36,42,48,54,60,66,72,78,84,90,96,102,108,114,120)
+
+
+TRAIN_TADPOLEMRI <- subset(TADPOLE_CROSSMRI,TADPOLE_CROSSMRI$D1==1)
+TRAIN_TADPOLEBASIC <- subset(TADPOLE_BASIC,TADPOLE_BASIC$D1==1)
+TEST_TADPOLEMRI <- subset(TADPOLE_CROSSMRI,TADPOLE_CROSSMRI$D2==1)
+TEST_TADPOLEBASIC <- subset(TADPOLE_BASIC,TADPOLE_BASIC$D2==1)
+
+
+```
+
+```{r Adjusting for age and ICV}
+
+
+TRAIN_TADPOLEMRI$cICV <- TRAIN_TADPOLEMRI$ICV^(1/3)
+TEST_TADPOLEMRI$cICV <- TEST_TADPOLEMRI$ICV^(1/3)
+
+rownames(TADPOLE_predictors) <- as.character(TADPOLE_predictors[,1])
+prednames <- as.character(TADPOLE_predictors[-c(1:17),1])
+
+TRAIN_TADPOLEMRI <- TRAIN_TADPOLEMRI[complete.cases(TRAIN_TADPOLEMRI[,prednames]),]
+ControlNormal <- subset(TRAIN_TADPOLEMRI,BXBL=="CN" & LastDX2=="NL" & LastVisit>2 & Month==0)
+sum(ControlNormal$PTGENDER==1)
+sum(ControlNormal$PTGENDER==2)
+hist(ControlNormal$MeanT)
+hist(subset(ControlNormal,PTGENDER==1)$MeanT)
+hist(subset(ControlNormal,PTGENDER==2)$MeanT)
+
+trainTadploe.adj <- featureAdjustment(TADPOLE_predictors[prednames,], baseModel="1+AGE+cICV",data=TRAIN_TADPOLEMRI,referenceframe=ControlNormal,strata="PTGENDER", type = "LM", pvalue = 0.001)
+
+testTadploe.adj <- featureAdjustment(TADPOLE_predictors[prednames,], baseModel="1+AGE+cICV",data=TEST_TADPOLEMRI,referenceframe=ControlNormal,strata="PTGENDER", type = "LM", pvalue = 0.001)
+
+ControlNormal.adj <- featureAdjustment(TADPOLE_predictors[prednames,], baseModel="1+AGE+cICV",data=ControlNormal,referenceframe=ControlNormal,strata="PTGENDER", type = "LM", pvalue = 0.001)
+
+
+hist(subset(ControlNormal.adj,PTGENDER==1)$MeanT,breaks = 15)
+hist(subset(ControlNormal.adj,PTGENDER==2)$MeanT,breaks = 15)
+hist(subset(ControlNormal.adj,PTGENDER==1)$MeanSAD,breaks = 15)
+hist(subset(ControlNormal.adj,PTGENDER==2)$MeanSAD,breaks = 15)
+
+
+#testTadploe.norm <- rankInverseNormalDataFrame(TADPOLE_predictors[prednames,], testTadploe.adj, ControlNormal.adj,strata="PTGENDER")
+
+trainTadploe.norm <- rankInverseNormalDataFrame(TADPOLE_predictors[prednames,], trainTadploe.adj, ControlNormal.adj,strata="PTGENDER")
+testTadploe.norm <- rankInverseNormalDataFrame(TADPOLE_predictors[prednames,], testTadploe.adj, ControlNormal.adj,strata="PTGENDER")
+
+mean(testTadploe.norm$MeanT)
+mean(trainTadploe.norm$MeanT)
+mean(testTadploe.norm$MeanSAD)
+mean(trainTadploe.norm$MeanSAD)
+
+plot(testTadploe.norm$MeanT~testTadploe.adj$MeanT)
+plot(trainTadploe.norm$MeanT~trainTadploe.adj$MeanT)
+plot(testTadploe.norm$MeanSAD~testTadploe.adj$MeanSAD)
+plot(trainTadploe.norm$MeanSAD~trainTadploe.adj$MeanSAD)
+
+```
+
+
+```{r spliting by visit}
+
+VISIT_TRAINCROSSMRI <- list()
+VISIT_TRAINBASIC <- list()
+VISIT_TESTCROSSMRI <- list()
+VISIT_TESTBASIC <- list()
+i = 1;
+for (j in months )
+{
+  VISIT_TRAINCROSSMRI[[i]] <- subset(trainTadploe.norm,Month==j)
+  VISIT_TRAINBASIC[[i]] <- subset(TRAIN_TADPOLEBASIC,Month2==j)
+  VISIT_TESTCROSSMRI[[i]] <- subset(testTadploe.norm,Month==j)
+  VISIT_TESTBASIC[[i]] <- subset(TEST_TADPOLEBASIC,Month2==j)
+  i = i + 1
+}
+sampledcolumns <- c("RID",as.character(TADPOLE_predictors[,1]));
+
+testLastTimePointWithNL <- subset(testTadploe.adj,LastComleteObs==1 & LastDX2=="NL")
+testLastTimePointWithMCI <- subset(testTadploe.adj,LastComleteObs==1 & LastDX2=="MCI")
+testLastTimePointWithAD <- subset(testTadploe.adj,LastComleteObs==1 & LastDX2=="Dementia")
+
+testWithNL <- subset(testTadploe.adj,LastDX2=="NL")
+testWithMCI <- subset(testTadploe.adj,LastDX2=="MCI")
+testWithAD <- subset(testTadploe.adj,LastDX2=="Dementia")
+
+checkIDs <- c(as.character(testLastTimePointWithNL$RID),as.character(testLastTimePointWithMCI$RID),as.character(testLastTimePointWithAD$RID))
+#write.csv(checkIDs,file="TestIDsWithCO.csv")
+
+
+```
+
+```{r univariate MCI to AD}
+CASESMCItoAD <- NULL
+YearMCItoAD <- NULL
+controlYearMCItoAD <- NULL;
+CONTROLMCItoAD <- NULL;
+TestSetMCItoAD <- NULL;
+
+for (j in 1:length(VISIT_TRAINCROSSMRI) )
+{
+  tmpss <-  subset(VISIT_TRAINCROSSMRI[[j]],MCI_AD==1 & BDX==2)
+  YearMCItoAD <- c(YearMCItoAD,(tmpss$YearMCItoAD))
+  CASESMCItoAD <- rbind(CASESMCItoAD,tmpss[,sampledcolumns])
+  
+  tmpss <- subset(VISIT_TRAINCROSSMRI[[j]],BXBL=="MCI" & LastDX2=="MCI" & LastVisit>3.0)
+  controlYearMCItoAD <- c(controlYearMCItoAD,(tmpss$YearMCItoAD))
+  CONTROLMCItoAD <- rbind(CONTROLMCItoAD,tmpss[,sampledcolumns])
+}
+
+CASESMCItoAD <- cbind(YearMCItoAD,CASESMCItoAD)
+CASESMCItoAD <- CASESMCItoAD[complete.cases(CASESMCItoAD),]
+CONTROLMCItoAD <- cbind(controlYearMCItoAD,CONTROLMCItoAD)
+CONTROLMCItoAD <- CONTROLMCItoAD[complete.cases(CONTROLMCItoAD),]
+colnames(CONTROLMCItoAD) <- colnames(CASESMCItoAD)
+
+MCIADUniRankFeaturesRaw <- univariateRankVariables(variableList = TADPOLE_predictors,
+	                                            formula = "YearMCItoAD ~ 1",
+	                                            Outcome = "YearMCItoAD",
+	                                            data = CASESMCItoAD, 
+	                                            categorizationType = "Raw", 
+	                                            type = "LM", 
+	                                            rankingTest = "Ztest",
+	                                            description = "Description",
+                                               uniType="Regression")
+
+
+mean(CASESMCItoAD$YearMCItoAD)
+sum(CASESMCItoAD$YearMCItoAD<1)/nrow(CASESMCItoAD)
+sum(CASESMCItoAD$YearMCItoAD<2)/nrow(CASESMCItoAD)
+
+```
+
+
+```{r Modeling MCI to AD}
+
+numberOfTrials=50
+ids <- unique(as.character(CASESMCItoAD$RID))
+
+sampleIDS_MCItoAD <- ids[sample(length(ids),9*length(ids)/10)]
+save(sampleIDS_MCItoAD,file=paste("sampleIDS_MCItoAD",numberOfTrials,".RDATA",sep="_"))
+
+trainMCItoAD <- subset(CASESMCItoAD,RID %in% sampleIDS_MCItoAD)
+testMCItoAD <- subset(CASESMCItoAD,!(RID %in% sampleIDS_MCItoAD))
+
+trainMCItoAD <- trainMCItoAD[complete.cases(trainMCItoAD),]
+trainMCItoAD$YearMCItoAD <- log(trainMCItoAD$YearMCItoAD+1)
+
+testMCItoAD <- testMCItoAD[complete.cases(testMCItoAD),]
+testMCItoAD$YearMCItoAD <- log(testMCItoAD$YearMCItoAD+1)
+
+print(length(unique(as.character(trainMCItoAD$RID))))
+print(length(unique(as.character(testMCItoAD$RID))))
+
+ids <- unique(as.character(trainMCItoAD$RID))
+sys_times <- NULL;
+MCItoAD <- list();
+n=1
+for (n in 1:numberOfTrials)
+{
+  singlecaseMCItoAD <- NULL;
+  for (i in ids)
+  {
+    case1 <- subset(trainMCItoAD,RID==i)
+    caserows <- nrow(case1)
+    if (caserows>1)
+    {
+      singlecaseMCItoAD <- rbind(singlecaseMCItoAD,case1[sample(caserows, 1),])
+    }
+    else
+    {
+      singlecaseMCItoAD <- rbind(singlecaseMCItoAD,case1)
+    }
+  }
+  singlecaseMCItoAD$RID <- NULL;
+  singlecaseMCItoAD$BDX <- NULL;
+  print(nrow(singlecaseMCItoAD))
+  sys_times <- rbind(sys_times,system.time(MCItoAD[[n]] <- FRESA.Model(YearMCItoAD ~ 1,singlecaseMCItoAD)))
+}
+save(sys_times,file=paste("sys_times_MCItoAD3",numberOfTrials,".RDATA",sep="_"))
+save(MCItoAD,file=paste("MCItoAD3",numberOfTrials,".RDATA",sep="_"))
+
+#load(file=paste("MCItoAD",numberOfTrials,".RDATA",sep="_"))
+#load(file=paste("sampleIDS_MCItoAD",numberOfTrials,".RDATA",sep="_"))
+#trainMCItoAD <- subset(CASESMCItoAD,RID %in% sampleIDS_MCItoAD)
+#testMCItoAD <- subset(CASESMCItoAD,!(RID %in% sampleIDS_MCItoAD))
+#trainMCItoAD <- trainMCItoAD[complete.cases(trainMCItoAD),]
+#trainMCItoAD$YearMCItoAD <- log(trainMCItoAD$YearMCItoAD+1)
+#testMCItoAD <- testMCItoAD[complete.cases(testMCItoAD),]
+#testMCItoAD$YearMCItoAD <- log(testMCItoAD$YearMCItoAD+1)
+
+baggedformula <- character();
+baggedformula2 <- character();
+for (n in 1:numberOfTrials)
+{
+  if (length(MCItoAD[[n]]$bagging$bagged.model$coefficients)>1)
+  {
+    baggedformula <- append(baggedformula,MCItoAD[[n]]$bagging$formula)
+  }
+  if (length(MCItoAD[[n]]$BSWiMS.model$coefficients)>1)
+  {
+    baggedformula2 <- append(baggedformula2,MCItoAD[[n]]$BSWiMS.model$formula)
+  }
+}
+
+bgmod <- baggedModel(as.character(baggedformula2),trainMCItoAD,type="LM",univariate =MCItoAD[[1]]$univariateAnalysis )
+
+mpb <- medianPredict(bgmod$formula,trainMCItoAD,testMCItoAD,type="SVM")
+plot(testMCItoAD$YearMCItoAD~mpb$medianPredict)
+cor.test(testMCItoAD$YearMCItoAD,mpb$medianPredict)
+
+mpb <- medianPredict(bgmod$formula,trainMCItoAD,testMCItoAD,predictType ="linear",type="LM")
+plot(testMCItoAD$YearMCItoAD~mpb$medianPredict)
+cor.test(testMCItoAD$YearMCItoAD,mpb$medianPredict)
+
+mp <- medianPredict(as.character(baggedformula),trainMCItoAD,testMCItoAD,predictType ="linear",type="LM")
+plot(testMCItoAD$YearMCItoAD~mp$medianPredict)
+cor.test(testMCItoAD$YearMCItoAD,mp$medianPredict)
+
+mp <- medianPredict(as.character(baggedformula),trainMCItoAD,testMCItoAD,type="SVM")
+plot(testMCItoAD$YearMCItoAD~mp$medianPredict)
+cor.test(testMCItoAD$YearMCItoAD,mp$medianPredict)
+
+mp <- medianPredict(as.character(baggedformula2),trainMCItoAD,testMCItoAD,type="SVM")
+plot(testMCItoAD$YearMCItoAD~mp$medianPredict)
+cor.test(testMCItoAD$YearMCItoAD,mp$medianPredict)
+
+mp <- medianPredict(as.character(baggedformula2),trainMCItoAD,testMCItoAD,predictType ="linear",type="LM")
+plot(testMCItoAD$YearMCItoAD~mp$medianPredict)
+plot(exp(testMCItoAD$YearMCItoAD)-1~exp(mp$medianPredict)-1)
+cor.test(testMCItoAD$YearMCItoAD,mp$medianPredict)
+cor.test(testMCItoAD$YearMCItoAD,mp$medianPredict,method="spearman")
+sqrt(mean((testMCItoAD$YearMCItoAD-mp$medianPredict)^2))
+mean(abs(testMCItoAD$YearMCItoAD-mp$medianPredict))
+plot((testMCItoAD$YearMCItoAD-mp$medianPredict)~testMCItoAD$YearMCItoAD)
+
+
+testWithMCI$yearNLtoAD <- numeric(nrow(testWithMCI))
+mp <- medianPredict(as.character(baggedformula2),trainMCItoAD,testWithMCI,type="SVM")
+cdft <- NULL
+x <- (1:60)/12
+for (i in 1:nrow(mp$predictions))
+{
+  fn <- ecdf(as.numeric(mp$predictions[i,-1]))
+  cdft <- rbind(cdft,fn(x))
+}
+rownames(cdft) <- rownames(mp$predictions)
+write.csv(cdft,file="MCItoADTimeCDF.csv")
+write.csv(mp$predictions,file="MCItoADTimePrediction.csv")
+
+mpl <- medianPredict(as.character(baggedformula2),trainMCItoAD,testWithMCI,predictType ="linear",type="LM")
+mpl$predictions[,-1] <- exp(mpl$predictions[,-1])-1
+cdft <- NULL
+x <- (1:60)/12
+mpre <- mpl$predictions
+for (i in 1:nrow(mpl$predictions))
+{
+  nd <- mpl$predictions[i,-1]
+  if (sna <- sum(is.na(nd))>0)
+  {
+    if (sna<numberOfTrials/2)
+    {
+      nd <- numeric(numberOfTrials) 
+    }
+    else
+    {
+      nd <- nd[!is.na(nd)];
+    }
+  }
+  fn <- ecdf(nd)
+  cdft <- rbind(cdft,fn(x))
+}
+rownames(cdft) <- rownames(mpl$predictions)
+write.csv(cdft,file="LMMCItoADTimeCDF.csv")
+write.csv(mpl$predictions,file="LMMCItoADTimePrediction.csv")
+
+
+```
+
+```{r predicting MCI to AD conversion}
+
+numberOfTrials=5
+
+for (rep in 1:5)
+{
+  case_classMCItoAD <- CASESMCItoAD
+  case_classMCItoAD$Event <- 1
+  control_classMCItoAD <- CONTROLMCItoAD
+  control_classMCItoAD$Event <- 0
+  
+  ids <- unique(as.character(case_classMCItoAD$RID))
+  sampleCasesIDS_MCItoAD <- ids[sample(length(ids),3*length(ids)/4)]
+  save(sampleCasesIDS_MCItoAD,file=paste("sampleCasesIDS_MCItoAD",numberOfTrials,".RDATA",sep="_"));
+  ids <- unique(as.character(control_classMCItoAD$RID))
+  sampleControlsIDS_MCItoAD <- ids[sample(length(ids),3*length(ids)/4)]
+  save(sampleControlsIDS_MCItoAD,file=paste("sampleControlsIDS_MCItoAD",numberOfTrials,".RDATA",sep="_"));
+  
+  
+  trainDataMCItoAD <- rbind(subset(case_classMCItoAD,RID %in% sampleCasesIDS_MCItoAD),
+                            subset(control_classMCItoAD,RID %in% sampleControlsIDS_MCItoAD))
+  testDataMCItoAD <- rbind(subset(case_classMCItoAD,!(RID %in% sampleCasesIDS_MCItoAD)),
+                            subset(control_classMCItoAD,!(RID %in% sampleControlsIDS_MCItoAD)))
+  
+  trainDataMCItoAD$YearMCItoAD <- NULL
+  trainDataMCItoAD$BDX <- NULL
+  
+  
+  ids <- unique(as.character(trainDataMCItoAD$RID))
+  preMCItoAD  <- list();
+  #load(file="preMCItoAD.RDATA")
+  n=1
+  sys_times <- NULL;
+  for (n in 1:numberOfTrials)
+  {
+    singlecaseMCItoAD <- NULL;
+    for (i in ids)
+    {
+      case1 <- subset(trainDataMCItoAD,RID==i)
+      caserows <- nrow(case1)
+      if (caserows>1)
+      {
+        singlecaseMCItoAD <- rbind(singlecaseMCItoAD,case1[sample(caserows, 1),])
+      }
+      else
+      {
+        singlecaseMCItoAD <- rbind(singlecaseMCItoAD,case1)
+      }
+    }
+    singlecaseMCItoAD$RID <- NULL;
+    singlecaseMCItoAD$BDX <- NULL;
+    print(sum(singlecaseMCItoAD$Event))
+    print(sum(singlecaseMCItoAD$Event==0))
+    sys_times <- rbind(sys_times,system.time(preMCItoAD[[n]] <- FRESA.Model(Event ~ 1,singlecaseMCItoAD)))
+  }
+  save(sys_times,file=paste("sys_times_preMCItoAD",numberOfTrials,".RDATA",sep="_"))
+  save(preMCItoAD,file=paste("preMCItoAD",numberOfTrials,".RDATA",sep="_"))
+  
+  load(file=paste("preMCItoAD2",numberOfTrials,".RDATA",sep="_"))
+  load(file=paste("sampleCasesIDS_MCItoAD2",numberOfTrials,".RDATA",sep="_"))
+  load(file=paste("sampleControlsIDS_MCItoAD2",numberOfTrials,".RDATA",sep="_"))
+  trainDataMCItoAD <- rbind(subset(case_classMCItoAD,RID %in% sampleCasesIDS_MCItoAD),
+                            subset(control_classMCItoAD,RID %in% sampleControlsIDS_MCItoAD))
+  testDataMCItoAD <- rbind(subset(case_classMCItoAD,!(RID %in% sampleCasesIDS_MCItoAD)),
+                            subset(control_classMCItoAD,!(RID %in% sampleControlsIDS_MCItoAD)))
+  
+  trainDataMCItoAD$YearMCItoAD <- NULL
+  trainDataMCItoAD$BDX <- NULL
+  
+  baggedformula <- character();
+  baggedformula2 <- character();
+  for (n in 1:numberOfTrials)
+  {
+    if (length(preMCItoAD[[n]]$bagging$bagged.model$coefficients)>1)
+    {
+      baggedformula <- append(baggedformula,preMCItoAD[[n]]$bagging$formula)
+    }
+    if (length(preMCItoAD[[n]]$BSWiMS.model$coefficients)>1)
+    {
+      baggedformula2 <- append(baggedformula2,preMCItoAD[[n]]$BSWiMS.model$formula)
+    }
+  }
+  
+  testDataMCItoAD <- testDataMCItoAD[complete.cases(testDataMCItoAD),]
+#  bgmod <- baggedModel(as.character(baggedformula2),trainDataMCItoAD,type="LOGIT",univariate=preMCItoAD[[1]]$univariateAnalysis)
+  barplot(bgmod$frequencyTable)
+#  mpb <- medianPredict(bgmod$formula,trainDataMCItoAD,testDataMCItoAD,predictType ="linear",type="LOGIT")
+#  pm2b <- plotModels.ROC(mpb$predictions,main="Bagging",cex=0.90)
+  
+#  mpb <- medianPredict(bgmod$formula,trainDataMCItoAD,testDataMCItoAD,type="SVM")
+#  mpb$predictions[-1] <- mpb$predictions[-1] - 0.5
+#  pm2b <- plotModels.ROC(mpb$predictions,main="SVM",cex=0.90)
+  
+  
+#  varlist <- c(all.vars(bgmod$bagged.model$formula)[-1],all.vars(bgmod$bagged.model$formula)[-1])
+#  varlist <- unique(varlist)
+#  system.time(MCItoADsig <- getSignature(data=trainDataMCItoAD,varlist=varlist,Outcome="Event",method="spearman"))
+  
+#  BAGGINGdistance <- signatureDistance(MCItoADsig$caseTamplate,testDataMCItoAD,"spearman") - signatureDistance(MCItoADsig$controlTemplate,testDataMCItoAD,"spearman") 
+  
+#  roc(as.vector(testDataMCItoAD$Event),BAGGINGdistance,plot=TRUE)
+  
+  mp2 <- medianPredict(as.character(baggedformula2),trainDataMCItoAD,testDataMCItoAD,predictType ="prob",type="LOGIT")
+  pm2 <- plotModels.ROC(mp2$predictions,main="Bagging",cex=0.90)
+  
+  mpS2 <- medianPredict(as.character(baggedformula2),trainDataMCItoAD,testDataMCItoAD,type="SVM")
+  mpS2$predictions[-1] <- mpS2$predictions[-1] - 0.5
+  pmS2 <- plotModels.ROC(mpS2$predictions,main="SVM",cex=0.90)
+  plot(mp2$medianPredict~mpS2$medianPredict)
+  
+  #mp3 <- medianPredict(as.character(baggedformula),trainDataMCItoAD,testDataMCItoAD,predictType ="linear",type="LOGIT")
+  #pm3 <- plotModels.ROC(mp3$predictions,main="Bagging",cex=0.90)
+  
+  #mps3 <- medianPredict(as.character(baggedformula),trainDataMCItoAD,testDataMCItoAD,type="SVM")
+  #mps3$predictions[-1] <- mps3$predictions[-1] - 0.5
+  #pms3 <- plotModels.ROC(mps3$predictions,main="SVM",cex=0.90)
+  
+  
+  testLastTimePointWithMCI$Event <- rep(0,nrow(testLastTimePointWithMCI))
+  predictionMCIToAD <- medianPredict(as.character(baggedformula2),trainDataMCItoAD,testLastTimePointWithMCI,predictType ="prob",type="SVM")
+  write.csv(predictionMCIToAD$medianPredict,file=paste(rep,"ADFromMCIPrediction.csv",sep="_"))
+  
+  predictionMCIToAD <- medianPredict(as.character(baggedformula2),trainDataMCItoAD,testLastTimePointWithMCI,predictType ="prob",type="LOGIT")
+  write.csv(predictionMCIToAD$medianPredict,file=paste(rep,"LOGITADFromMCIPrediction.csv",sep="_"))
+  
+  
+  testWithMCI$Event <- rep(0,nrow(testWithMCI))
+  predictionAllMCIToAD <- medianPredict(as.character(baggedformula2),trainDataMCItoAD,testWithMCI,predictType ="prob",type="SVM")
+  
+  write.csv(predictionAllMCIToAD$medianPredict,file=paste(rep,"ALLADFromMCIPrediction.csv",sep="_"))
+  write.csv(predictionAllMCIToAD$predictions,file=paste(rep,"ALLPredADFromMCIPrediction.csv",sep="_"))
+  
+  
+  logpredictionAllMCIToAD <- medianPredict(as.character(baggedformula2),trainDataMCItoAD,testWithMCI,predictType ="prob",type="LOGIT")
+  
+  mcitoadpred <- logpredictionAllMCIToAD$predictions
+  medpred <- logpredictionAllMCIToAD$medianPredict
+  write.csv(logpredictionAllMCIToAD$medianPredict,file=paste(rep,"LogitALLADFromMCIPrediction.csv",sep="_"))
+  write.csv(logpredictionAllMCIToAD$predictions,file=paste(rep,"LogitALLPredADFromMCIPrediction.csv",sep="_"))
+  
+  plot(logpredictionAllMCIToAD$medianPredict~predictionAllMCIToAD$medianPredict)
+
+}
+
+```
