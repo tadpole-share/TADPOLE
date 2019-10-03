@@ -1,7 +1,7 @@
 DATA_DIR = ../data
 TMP_DIR = ./tmp
 
-rmarkdown = R -e "rmarkdown::render('$(1)', knit_root_dir='`pwd`')"
+rmarkdown = R --quiet -e "rmarkdown::render('$(1)', knit_root_dir='`pwd`')"
 
 #PredictorsList.txt:
 # Description: Tab delimeted file with all the features used for prediction
@@ -49,6 +49,13 @@ D3Clean.txt:
 	echo "TODO: D3Clean"
 	cp ../data_dump/D3Clean.txt .
 
+
+
+# Data conditioning
+# Script: TADPOLE_Data_Conditioning.Rmd
+# It will read the CompleMRIObs.txt and will adjust all features for AGE and ICV
+# it will read the D3Clean.txt and it will impute all missing values
+# the adjsted files then are normalized by the rank inverse transform.
 DATA_CONDITION_INPUT = CompleMRIObs.txt D3Clean.txt
 DATA_CONDITION_OUTPUT = TEST_TADPOLEMRI.RDATA D3Imputed.csv D3Imputed.RDATA TRAIN_TADPOLEMRI.RDATA TEST_TADPOLEMRImputed.csv trainTadploe.norm.RDATA testTadploe.norm.RDATA D3.norm.RDATA
 # alias data_condition
@@ -56,26 +63,25 @@ data_condition: $(DATA_CONDITION_OUTPUT)
 $(DATA_CONDITION_OUTPUT): $(DATA_CONDITION_INPUT)
 	$(call rmarkdown,src/TADPOLE_Data_Conditioning.Rmd)
 
-# Data conditioning
-# Script: TADPOLE_Data_Conditioning.Rmd
-# It will read the CompleMRIObs.txt and will adjust all features for AGE and ICV
-# it will read the D3Clean.txt and it will impute all missing values
-# the adjsted files then are normalized by the rank inverse transform.
 
-
-csvs_conversion_prediction: PredictorsList.txt D3Imputed.RDATA TEST_TADPOLEMRI.RDATA TRAIN_TADPOLEMRI.RDATA trainTadploe.norm.RDATA testTadploe.norm.RDATA D3.norm.RDATA
 # Script: TADPOLE_MCI_to_AD_v4.Rmd
 #                Script: TADPOLE_MCI_to_NL_v1.Rmd
 #                Script: TADPOLE_NL_to_MCI_v4.Rmd
 #                Script: TADPOLE_NL_to_AD_v4.Rmd
 # *csv files with conversion prediction
-	echo "TODO"
+CONVERSION_PREDICTION_INPUT = PredictorsList.txt D3Imputed.RDATA TEST_TADPOLEMRI.RDATA TRAIN_TADPOLEMRI.RDATA trainTadploe.norm.RDATA testTadploe.norm.RDATA D3.norm.RDATA
+conversion_prediction: $(CONVERSION_PREDICTION_INPUT)
+	$(call rmarkdown,src/TADPOLE_MCI_to_AD_v4.Rmd)
+	$(call rmarkdown,src/TADPOLE_MCI_to_NL_v1.Rmd)
+	$(call rmarkdown,src/TADPOLE_NL_to_MCI_v4.Rmd)
+	$(call rmarkdown,src/TADPOLE_NL_to_AD_v4.Rmd)
 
-csvs_probability_conversion: PredictorsList.txt D3Imputed.RDATA TEST_TADPOLEMRI.RDATA TRAIN_TADPOLEMRI.RDATA trainTadploe.norm.RDATA testTadploe.norm.RDATA D3.norm.RDATA
+probability_conversion: PredictorsList.txt D3Imputed.RDATA TEST_TADPOLEMRI.RDATA TRAIN_TADPOLEMRI.RDATA trainTadploe.norm.RDATA testTadploe.norm.RDATA D3.norm.RDATA
 #  Predicting Time to Event conversion:
 #                 Script: TADPOLE_Time_to_AD_V2.Rmd
 #                Script: TADPOLE_Time_to_MCI_V2.Rmd
-	echo "todo"
+	$(call rmarkdown,src/TADPOLE_Time_to_AD_V2.Rmd)
+	$(call rmarkdown,src/TADPOLE_Time_to_MCI_V2.Rmd)
 
 ensembling:
 # 4) Ensembling the predictions:
@@ -98,4 +104,13 @@ ventricles_csvs: PredictorsList.txt D3Imputed.RDATA TEST_TADPOLEMRI.RDATA TRAIN_
 
 
 clean:
-	rm -f $(DATA_CONDITION_INPUT) $(DATA_CONDITION_OUTPUT)
+	rm -f CompleMRIObs.txt \
+		D3Clean.txt \
+		TEST_TADPOLEMRI.RDATA\
+		D3Imputed.csv\
+		D3Imputed.RDATA\
+		TRAIN_TADPOLEMRI.RDATA\
+		TEST_TADPOLEMRImputed.csv\
+		trainTadploe.norm.RDATA\
+		testTadploe.norm.RDATA\
+		D3.norm.RDATA

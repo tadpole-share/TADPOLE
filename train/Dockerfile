@@ -12,11 +12,13 @@ RUN apt-get update &&\
     R -q -e 'install.packages("/FRESA.CAD_3.0.0.tar.gz", repos = NULL, type="source")' &&\
     mkdir /app
 
-COPY PredictorsList.txt Makefile src /app/
+COPY PredictorsList.txt Makefile /app/
+COPY src/ /app/src
+
 WORKDIR /app
 
-CMD ['make', 'data_condition']
+CMD ["make", "data_condition"]
 
 
 # docker build . -t borre-train
-# docker run -v `pwd`/../data_dump:/data_dump -it borre-train /bin/bash
+# docker run -v `pwd`/../data_dump:/data_dump -it --rm borre-train /bin/bash
