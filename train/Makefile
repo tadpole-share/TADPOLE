@@ -14,6 +14,23 @@ AllSubjectsWithBasicInfo.txt:
 	cp ../data_dump/AllSubjectsWithBasicInfo.txt .
 
 
+CompleMRIObs.txt:
+# CompleMRIObs.txt
+# Description: Tab delimeted file with the basic longitudinal information of MRI structural information of D1-D2 datasets
+#                The file was generated in Microsoft Excel
+#                                - All volumes were transformed by the cubic root
+#                                - All surface areas were transformed by the square root
+#                                - Derived columns with the thickness coeficient of variation: StandardDeviation/Thickeness
+#                                - Derived columns with the strucutral compactness: (square root of Surface Area)/(cubic root of Volume)
+#                                - Derived columns containing the mean of left and rigth features
+#                                - Derived columns containing the absolute difference between left and rigth features
+#                                - Derived columns containing mean thickness and standard deviations of thickness
+#                                - Derived columns containing mean surface area and standard deviations of transformed areas
+#                                - Derived columns containing mean volumens and standard deviations of transformed volumens
+#                                - Derived columns containing the maximum absolute differences between left and right
+	echo "TODO CompleMRIObs"
+	cp ../data_dump/CompleMRIObs.txt .
+
 
 D3Clean.txt:
 # D3Clean.txt
@@ -29,29 +46,14 @@ D3Clean.txt:
 #                                - Derived columns containing mean surface area and standard deviations of transformed areas
 #                                - Derived columns containing mean volumens and standard deviations of transformed volumens
 #                                - Derived columns containing the maximum absolute differences between left and right
-	echo "TODO: d3Clean"
+	echo "TODO: D3Clean"
 	cp ../data_dump/D3Clean.txt .
 
+DATA_CONDITION_INPUT = CompleMRIObs.txt D3Clean.txt
+DATA_CONDITION_OUTPUT = TEST_TADPOLEMRI.RDATA D3Imputed.csv D3Imputed.RDATA TRAIN_TADPOLEMRI.RDATA TEST_TADPOLEMRImputed.csv trainTadploe.norm.RDATA testTadploe.norm.RDATA D3.norm.RDATA
+$(DATA_CONDITION_OUTPUT): $(DATA_CONDITION_INPUT)
+data_condition: $(DATA_CONDITION_OUTPUT)
 
-CompleMRIObs.txt: D3Clean.txt
-# CompleMRIObs.txt
-# Description: Tab delimeted file with the basic longitudinal information of MRI structural information of D1-D2 datasets
-#                The file was generated in Microsoft Excel
-#                                - All volumes were transformed by the cubic root
-#                                - All surface areas were transformed by the square root
-#                                - Derived columns with the thickness coeficient of variation: StandardDeviation/Thickeness
-#                                - Derived columns with the strucutral compactness: (square root of Surface Area)/(cubic root of Volume)
-#                                - Derived columns containing the mean of left and rigth features
-#                                - Derived columns containing the absolute difference between left and rigth features
-#                                - Derived columns containing mean thickness and standard deviations of thickness
-#                                - Derived columns containing mean surface area and standard deviations of transformed areas
-#                                - Derived columns containing mean volumens and standard deviations of transformed volumens
-#                                - Derived columns containing the maximum absolute differences between left and right
-	echo "TODO"
-	cp ../data_dump/CompleMRIObs.txt .
-
-
-TEST_TADPOLEMRI.RDATA D3Imputed.csv D3Imputed.RDATA TRAIN_TADPOLEMRI.RDATA TEST_TADPOLEMRImputed.csv trainTadploe.norm.RDATA testTadploe.norm.RDATA D3.norm.RDATA: CompleMRIObs.txt D3Clean.txt
 # Data conditioning
 # Script: TADPOLE_Data_Conditioning.Rmd
 # It will read the CompleMRIObs.txt and will adjust all features for AGE and ICV

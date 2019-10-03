@@ -107,30 +107,33 @@ plot(trainTadploe.norm$MeanSAD~trainTadploe.adj$MeanSAD)
 
 
 ```{r spliting by visit}
-months <- c(0,3,6,12,18,24,30,36,42,48,54,60,66,72,78,84,90,96,102,108,114,120)
-
-VISIT_TRAINCROSSMRI <- list()
-VISIT_TRAINBASIC <- list()
-VISIT_TESTCROSSMRI <- list()
-VISIT_TESTBASIC <- list()
-i = 1;
-for (j in months )
-{
-  VISIT_TRAINCROSSMRI[[i]] <- subset(trainTadploe.norm,Month==j)
-  VISIT_TRAINBASIC[[i]] <- subset(TRAIN_TADPOLEBASIC,Month2==j)
-  VISIT_TESTCROSSMRI[[i]] <- subset(testTadploe.norm,Month==j)
-  VISIT_TESTBASIC[[i]] <- subset(TEST_TADPOLEBASIC,Month2==j)
-  i = i + 1
-}
-sampledcolumns <- c("RID",as.character(TADPOLE_predictors[,1]));
-
-testLastTimePointWithNL <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="NL")[,sampledcolumns]
-testLastTimePointWithMCI <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="MCI")[,sampledcolumns]
-testLastTimePointWithAD <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="Dementia")[,sampledcolumns]
-
-testWithNL <- subset(testTadploe.norm,LastDX2=="NL")[,sampledcolumns]
-testWithMCI <- subset(testTadploe.norm,LastDX2=="MCI")[,sampledcolumns]
-testWithAD <- subset(testTadploe.norm,LastDX2=="Dementia")[,sampledcolumns]
+# TADPOLE_BASIC <- read.delim("AllSubjectsWithBasicInfo.txt")
+# TRAIN_TADPOLEBASIC <- subset(TADPOLE_BASIC,TADPOLE_BASIC$D1==1)
+#
+# months <- c(0,3,6,12,18,24,30,36,42,48,54,60,66,72,78,84,90,96,102,108,114,120)
+#
+# VISIT_TRAINCROSSMRI <- list()
+# VISIT_TRAINBASIC <- list()
+# VISIT_TESTCROSSMRI <- list()
+# VISIT_TESTBASIC <- list()
+# i = 1;
+# for (j in months )
+# {
+#   VISIT_TRAINCROSSMRI[[i]] <- subset(trainTadploe.norm,Month==j)
+#   VISIT_TRAINBASIC[[i]] <- subset(TRAIN_TADPOLEBASIC,Month2==j)
+#   VISIT_TESTCROSSMRI[[i]] <- subset(testTadploe.norm,Month==j)
+#   VISIT_TESTBASIC[[i]] <- subset(TEST_TADPOLEBASIC,Month2==j)
+#   i = i + 1
+# }
+# sampledcolumns <- c("RID",as.character(TADPOLE_predictors[,1]));
+#
+# testLastTimePointWithNL <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="NL")[,sampledcolumns]
+# testLastTimePointWithMCI <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="MCI")[,sampledcolumns]
+# testLastTimePointWithAD <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="Dementia")[,sampledcolumns]
+#
+# testWithNL <- subset(testTadploe.norm,LastDX2=="NL")[,sampledcolumns]
+# testWithMCI <- subset(testTadploe.norm,LastDX2=="MCI")[,sampledcolumns]
+# testWithAD <- subset(testTadploe.norm,LastDX2=="Dementia")[,sampledcolumns]
 
 
 ```
