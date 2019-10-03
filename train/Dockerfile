@@ -7,7 +7,7 @@ RUN apt-get update &&\
     echo "UTC" > /etc/timezone &&\
     DEBIAN_FRONTEND=noninteractive apt-get install -y tzdata &&\
     apt-get install -y r-base-core pandoc && \
-    R -q -e 'install.packages(c("rmarkdown", "epiR", "network", "GGally", "e1071"))' &&\
+    R -q -e 'install.packages(c("rmarkdown", "epiR", "network", "GGally", "e1071", "cvTools"))' &&\
     R -q -e 'install.packages(c("miscTools", "Hmisc", "pROC", "RcppArmadillo"))' &&\
     R -q -e 'install.packages("/FRESA.CAD_3.0.0.tar.gz", repos = NULL, type="source")' &&\
     mkdir /app
