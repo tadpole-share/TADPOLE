@@ -1,6 +1,8 @@
 DATA_DIR = ../data
 TMP_DIR = ./tmp
 
+rmarkdown = R -e "rmarkdown::render('$(1)', knit_root_dir='`pwd`')"
+
 #PredictorsList.txt:
 # Description: Tab delimeted file with all the features used for prediction
 #	echo "TODO"
@@ -11,7 +13,27 @@ AllSubjectsWithBasicInfo.txt:
 	echo "TODO"
 	cp ../data_dump/AllSubjectsWithBasicInfo.txt .
 
-CompleMRIObs.txt:
+
+
+D3Clean.txt:
+# D3Clean.txt
+# Description: Tab delimeted file with the basic longitudinal information of MRI structural information of D3 dataset
+#                The file was generated in Microsoft Excel
+#                                - All volumes were transformed by the cubic root
+#                                - All surface areas were transformed by the square root
+#                                - Derived columns with the thickness coeficient of variation: StandardDeviation/Thickeness
+#                                - Derived columns with the strucutral compactness: (square root of Surface Area)/(cubic root of Volume)
+#                                - Derived columns containing the mean of left and rigth features
+#                                - Derived columns containing the absolute difference between left and rigth features
+#                                - Derived columns containing mean thickness and standard deviations of thickness
+#                                - Derived columns containing mean surface area and standard deviations of transformed areas
+#                                - Derived columns containing mean volumens and standard deviations of transformed volumens
+#                                - Derived columns containing the maximum absolute differences between left and right
+	echo "TODO: d3Clean"
+	cp ../data_dump/D3Clean.txt .
+
+
+CompleMRIObs.txt: D3Clean.txt
 # CompleMRIObs.txt
 # Description: Tab delimeted file with the basic longitudinal information of MRI structural information of D1-D2 datasets
 #                The file was generated in Microsoft Excel
@@ -28,21 +50,6 @@ CompleMRIObs.txt:
 	echo "TODO"
 	cp ../data_dump/CompleMRIObs.txt .
 
-D3Clean.txt:
-# D3Clean.txt
-# Description: Tab delimeted file with the basic longitudinal information of MRI structural information of D3 dataset
-#                The file was generated in Microsoft Excel
-#                                - All volumes were transformed by the cubic root
-#                                - All surface areas were transformed by the square root
-#                                - Derived columns with the thickness coeficient of variation: StandardDeviation/Thickeness
-#                                - Derived columns with the strucutral compactness: (square root of Surface Area)/(cubic root of Volume)
-#                                - Derived columns containing the mean of left and rigth features
-#                                - Derived columns containing the absolute difference between left and rigth features
-#                                - Derived columns containing mean thickness and standard deviations of thickness
-#                                - Derived columns containing mean surface area and standard deviations of transformed areas
-#                                - Derived columns containing mean volumens and standard deviations of transformed volumens
-#                                - Derived columns containing the maximum absolute differences between left and right
-	echo "TODO"
 
 TEST_TADPOLEMRI.RDATA D3Imputed.csv D3Imputed.RDATA TRAIN_TADPOLEMRI.RDATA TEST_TADPOLEMRImputed.csv trainTadploe.norm.RDATA testTadploe.norm.RDATA D3.norm.RDATA: CompleMRIObs.txt D3Clean.txt
 # Data conditioning
@@ -50,7 +57,7 @@ TEST_TADPOLEMRI.RDATA D3Imputed.csv D3Imputed.RDATA TRAIN_TADPOLEMRI.RDATA TEST_
 # It will read the CompleMRIObs.txt and will adjust all features for AGE and ICV
 # it will read the D3Clean.txt and it will impute all missing values
 # the adjsted files then are normalized by the rank inverse transform.
-	echo "TODO"
+	$(call rmarkdown,src/TADPOLE_Data_Conditioning.Rmd)
 
 csvs_conversion_prediction: PredictorsList.txt D3Imputed.RDATA TEST_TADPOLEMRI.RDATA TRAIN_TADPOLEMRI.RDATA trainTadploe.norm.RDATA testTadploe.norm.RDATA D3.norm.RDATA
 # Script: TADPOLE_MCI_to_AD_v4.Rmd
