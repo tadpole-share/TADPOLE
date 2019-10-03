@@ -1,0 +1,262 @@
+---
+title: "TADPOLE"
+author: "José Tamez-Peña"
+date: "October 20, 2017"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, echo = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, warning = FALSE, message = FALSE,comment = "#>")
+```
+
+```{r Libraries, echo = FALSE}
+
+library("epiR")
+library("FRESA.CAD")
+library(network)
+library(GGally)
+library("e1071")
+
+TADPOLE_predictors <- read.delim("PredictorsList.txt")
+
+load(file="D3Imputed.RDATA")
+load(file="TEST_TADPOLEMRI.RDATA")
+load(file="TRAIN_TADPOLEMRI.RDATA")
+load(file="trainTadploe.norm.RDATA")
+load(file="testTadploe.norm.RDATA")
+load(file="D3.norm.RDATA")
+
+```
+
+```{r spliting by visit}
+months <- c(0,3,6,12,18,24,30,36,42,48,54,60,66,72,78,84,90,96,102,108,114,120)
+
+VISIT_TRAINCROSSMRI <- list()
+VISIT_TESTCROSSMRI <- list()
+i = 1;
+for (j in months )
+{
+  VISIT_TRAINCROSSMRI[[i]] <- subset(trainTadploe.norm,Month==j)
+  VISIT_TESTCROSSMRI[[i]] <- subset(testTadploe.norm,Month==j)
+  i = i + 1
+}
+sampledcolumns <- c("RID",as.character(TADPOLE_predictors[,1]));
+
+testLastTimePointWithNL <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="NL")[,sampledcolumns]
+testLastTimePointWithMCI <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="MCI")[,sampledcolumns]
+testLastTimePointWithAD <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="Dementia")[,sampledcolumns]
+
+testWithNL <- subset(testTadploe.norm,LastDX2=="NL")[,sampledcolumns]
+testWithMCI <- subset(testTadploe.norm,LastDX2=="MCI")[,sampledcolumns]
+testWithAD <- subset(testTadploe.norm,LastDX2=="Dementia")[,sampledcolumns]
+
+```
+
+```{r univariate NL to AD}
+CASESNLtoMCI <- NULL
+YearNLtoMCI <- NULL
+controlYearNLtoMCI <- NULL;
+CONTROLNLtoMCI <- NULL;
+TestSetNLtoMCI <- NULL;
+
+for (j in 1:length(VISIT_TRAINCROSSMRI) )
+{
+  tmpss <-  subset(VISIT_TRAINCROSSMRI[[j]],NL_MCI==1 & BDX==1 & YearNLtoMCI<4)
+  YearNLtoMCI <- c(YearNLtoMCI,(tmpss$YearNLtoMCI))
+  CASESNLtoMCI <- rbind(CASESNLtoMCI,tmpss[,sampledcolumns])
+
+  tmpss <- subset(VISIT_TRAINCROSSMRI[[j]],BXBL=="CN" & LastDX2=="NL" & LastVisit>=5.0 & BDX==1)
+  controlYearNLtoMCI <- c(controlYearNLtoMCI,(tmpss$YearNLtoMCI))
+  CONTROLNLtoMCI <- rbind(CONTROLNLtoMCI,tmpss[,sampledcolumns])
+}
+
+CASESNLtoMCI <- cbind(YearNLtoMCI,CASESNLtoMCI)
+CASESNLtoMCI <- CASESNLtoMCI[complete.cases(CASESNLtoMCI),]
+CONTROLNLtoMCI <- cbind(controlYearNLtoMCI,CONTROLNLtoMCI)
+CONTROLNLtoMCI <- CONTROLNLtoMCI[complete.cases(CONTROLNLtoMCI),]
+colnames(CONTROLNLtoMCI) <- colnames(CASESNLtoMCI)
+
+NLMCIUniRankFeaturesRaw <- univariateRankVariables(variableList = TADPOLE_predictors,
+	                                            formula = "YearNLtoMCI ~ 1",
+	                                            Outcome = "YearNLtoMCI",
+	                                            data = CASESNLtoMCI, 
+	                                            categorizationType = "Raw", 
+	                                            type = "LM", 
+	                                            rankingTest = "Ztest",
+	                                            description = "Description",
+                                               uniType="Regression")
+
+
+
+```
+
+```{r predicting NL to MCI conversion}
+
+compute=FALSE;
+numberofRepp = 5
+numberofFolds = 10 
+numberOfTrials = 5
+case_classNLtoMCI <- CASESNLtoMCI
+case_classNLtoMCI$Event <- 1
+control_classNLtoMCI <- CONTROLNLtoMCI
+control_classNLtoMCI$Event <- 0
+
+fulltrain <-rbind(case_classNLtoMCI,control_classNLtoMCI)
+fulltrain <- fulltrain[complete.cases(fulltrain),] 
+sum(fulltrain$Event)
+sum(fulltrain$Event==0)
+
+testLastTimePointWithMCI$Event <- rep(0,nrow(testLastTimePointWithMCI))
+testWithNL$Event <- rep(0,nrow(testWithNL))
+logitauc <- NULL;
+allformulas <- character();
+alltestPredictions <- NULL
+allD3Predictions <- NULL
+repp <- 1
+for (repp in 1:numberofRepp)
+{
+  
+	ids_ca <- unique(as.character(case_classNLtoMCI$RID))
+	casefolds <- cvTools::cvFolds(length(ids_ca), numberofFolds,1,  "random");
+
+  ids_co <- unique(as.character(control_classNLtoMCI$RID))
+	controlfolds <- cvTools::cvFolds(length(ids_co), numberofFolds,1,  "random");
+  j=1
+	for (j in 1:numberofFolds)
+	{
+    
+  	sampleCasesIDS_NLtoMCI <- ids_ca[casefolds$subsets[casefolds$which != j,]];
+    sampleControlsIDS_NLtoMCI <- ids_co[controlfolds$subsets[controlfolds$which != j,]];
+
+    
+    trainDataNLtoMCI <- rbind(subset(case_classNLtoMCI,RID %in% sampleCasesIDS_NLtoMCI),
+                              subset(control_classNLtoMCI,RID %in% sampleControlsIDS_NLtoMCI))
+    testDataNLtoMCI <- rbind(subset(case_classNLtoMCI,!(RID %in% sampleCasesIDS_NLtoMCI)),
+                              subset(control_classNLtoMCI,!(RID %in% sampleControlsIDS_NLtoMCI)))
+    
+    trainDataNLtoMCI$YearNLtoMCI <- NULL
+    trainDataNLtoMCI$BDX <- NULL
+    trainDataNLtoMCI <- trainDataNLtoMCI[complete.cases(trainDataNLtoMCI),]
+    testDataNLtoMCI <- testDataNLtoMCI[complete.cases(testDataNLtoMCI),]
+    
+    allIDs <- unique(c(sampleCasesIDS_NLtoMCI,sampleControlsIDS_NLtoMCI))
+    
+    testD3 <- subset(D3.norm,!(RID %in% allIDs))
+    testD3$Event <- rep(0,nrow(testD3))
+    
+    
+    ids <- unique(as.character(trainDataNLtoMCI$RID))
+    preNLtoMCI  <- list();
+    n=1
+    if (compute)
+    {
+      sys_times <- NULL;
+      for (n in 1:numberOfTrials)
+      {
+        singlecaseNLtoMCI <- NULL;
+        for (i in ids)
+        {
+          case1 <- subset(trainDataNLtoMCI,RID==i)
+          caserows <- nrow(case1)
+          if (caserows>1)
+          {
+            singlecaseNLtoMCI <- rbind(singlecaseNLtoMCI,case1[sample(caserows, 1),])
+          }
+          else
+          {
+            singlecaseNLtoMCI <- rbind(singlecaseNLtoMCI,case1)
+          }
+        }
+        singlecaseNLtoMCI$RID <- NULL;
+        singlecaseNLtoMCI$BDX <- NULL;
+        print(sum(singlecaseNLtoMCI$Event))
+        print(sum(singlecaseNLtoMCI$Event==0))
+        sys_times <- rbind(sys_times,system.time(preNLtoMCI[[n]] <- FRESA.Model(Event ~ 1,singlecaseNLtoMCI)))
+      }
+  
+      save(sys_times,file=paste("sys_times_preNLtoMCI",numberOfTrials,j,repp,".RDATA",sep="_"))
+      save(preNLtoMCI,file=paste("preNLtoMCI",numberOfTrials,j,repp,".RDATA",sep="_"))
+    }
+    else
+    {
+      load(file=paste("preNLtoMCI",numberOfTrials,j,repp,".RDATA",sep="_"))
+      sampleCasesIDS_NLtoMCI <- NULL
+      sampleControlsIDS_NLtoMCI <- NULL
+    }
+    
+    baggedformula <- character();
+    n=1
+    for (n in 1:numberOfTrials)
+    {
+      if (length(preNLtoMCI[[n]]$BSWiMS.model$coefficients)>1)
+      {
+        baggedformula <- append(baggedformula,preNLtoMCI[[n]]$BSWiMS.model$formula)
+      }
+      if (!compute)
+      {
+    	  idst <- unlist(str_split(rownames(subset(preNLtoMCI[[n]]$bootstrappedModel$data,Event==1)),"_"))
+        sampleCasesIDS_NLtoMCI <- append(sampleCasesIDS_NLtoMCI,idst[2*(0:(length(idst)-1))+1])
+    	  idst <- unlist(str_split(rownames(subset(preNLtoMCI[[n]]$bootstrappedModel$data,Event==0)),"_"))
+        sampleControlsIDS_NLtoMCI <- append(sampleControlsIDS_NLtoMCI,idst[2*(0:(length(idst)-1))+1])
+      }
+    }
+    if (!compute)
+    {
+    	sampleCasesIDS_NLtoMCI <- unique(sampleCasesIDS_NLtoMCI)
+    	sampleControlsIDS_NLtoMCI <- unique(sampleControlsIDS_NLtoMCI)
+      trainDataNLtoMCI <- rbind(subset(case_classNLtoMCI,RID %in% sampleCasesIDS_NLtoMCI),
+                                subset(control_classNLtoMCI,RID %in% sampleControlsIDS_NLtoMCI))
+      testDataNLtoMCI <- rbind(subset(case_classNLtoMCI,!(RID %in% sampleCasesIDS_NLtoMCI)),
+                                subset(control_classNLtoMCI,!(RID %in% sampleControlsIDS_NLtoMCI)))
+      
+      trainDataNLtoMCI$YearNLtoMCI <- NULL
+      trainDataNLtoMCI$BDX <- NULL
+      trainDataNLtoMCI <- trainDataNLtoMCI[complete.cases(trainDataNLtoMCI),]
+      testDataNLtoMCI <- testDataNLtoMCI[complete.cases(testDataNLtoMCI),]
+      
+      allIDs <- unique(c(sampleCasesIDS_NLtoMCI,sampleControlsIDS_NLtoMCI))
+
+      testD3 <- subset(D3.norm,!(RID %in% allIDs))
+      testD3$Event <- rep(0,nrow(testD3))
+    }
+    
+    mp2 <- medianPredict(as.character(baggedformula),trainDataNLtoMCI,testDataNLtoMCI,predictType ="prob",type="LOGIT")
+    alltestPredictions <- rbind(alltestPredictions,cbind(testDataNLtoMCI$Event,mp2$medianPredict))
+    pm2 <- plotModels.ROC(mp2$predictions,main="Bagging",cex=0.90)
+    logitauc <- append(logitauc,pm2$ensemble.auc)
+
+    mpD3 <- medianPredict(as.character(baggedformula),trainDataNLtoMCI,testD3,predictType ="prob",type="LOGIT")
+    allD3Predictions <- rbind(allD3Predictions,cbind(testD3$RID,mpD3$medianPredict));
+    
+    
+    allformulas <- append(allformulas,as.character(baggedformula))
+	}
+  
+}
+write.csv(allD3Predictions,file=paste(repp,"AllD3_NLtoMCI.csv",sep="_"))
+
+bp <- boxplot(allD3Predictions[,2]~allD3Predictions[,1],plot=FALSE)
+bpstat <- bp$stats[3,]
+names(bpstat) <- bp$names 
+write.csv(bpstat,file=paste(repp,"All_Median_D3_NLtoMCI.csv",sep="_"))
+
+pm2 <- plotModels.ROC(alltestPredictions,main="All Tests",cex=0.90)
+barplot(logitauc)
+write.csv(allformulas,file=paste(repp,"AllFormulasNLtoMCI.csv",sep="_"))
+
+logpredictionAllNLtoMCI <- medianPredict(allformulas,fulltrain,testWithNL,predictType ="prob",type="LOGIT")
+  
+write.csv(logpredictionAllNLtoMCI$medianPredict,file=paste(repp,"ALL_D2_Median_NLtoMCI.csv",sep="_"))
+write.csv(logpredictionAllNLtoMCI$predictions,file=paste(repp,"ALL_D2_Predictions_NLtoMCI.csv",sep="_"))
+
+testLastTimePointWithNL$Event <- rep(0,nrow(testLastTimePointWithNL))
+predictionNLtoMCI <- medianPredict(allformulas,fulltrain,testLastTimePointWithNL,predictType ="prob",type="LOGIT")
+write.csv(predictionNLtoMCI$medianPredict,file=paste(repp,"ALL_D2_Median_LTP_NLtoMCI.csv",sep="_"))
+
+```
+
