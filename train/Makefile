@@ -1,15 +1,17 @@
 DATA_DIR = ../data
 TMP_DIR = ./tmp
 
-PredictorsList.txt:
+#PredictorsList.txt:
 # Description: Tab delimeted file with all the features used for prediction
-	echo "TODO"
+#	echo "TODO"
+#	cp ../data/PredictorsList.txt .
 
 AllSubjectsWithBasicInfo.txt:
 # Description: Tab delimeted file with the basic demographics of all TADPOLE subjects
 	echo "TODO"
+	cp ../data_dump/AllSubjectsWithBasicInfo.txt .
 
-CompleteMRIObs.txt:
+CompleMRIObs.txt:
 # CompleMRIObs.txt
 # Description: Tab delimeted file with the basic longitudinal information of MRI structural information of D1-D2 datasets
 #                The file was generated in Microsoft Excel
@@ -24,6 +26,7 @@ CompleteMRIObs.txt:
 #                                - Derived columns containing mean volumens and standard deviations of transformed volumens
 #                                - Derived columns containing the maximum absolute differences between left and right
 	echo "TODO"
+	cp ../data_dump/CompleMRIObs.txt .
 
 D3Clean.txt:
 # D3Clean.txt
@@ -41,9 +44,10 @@ D3Clean.txt:
 #                                - Derived columns containing the maximum absolute differences between left and right
 	echo "TODO"
 
-TEST_TADPOLEMRI.RDATA D3Imputed.csv D3Imputed.RDATA TRAIN_TADPOLEMRI.RDATA TEST_TADPOLEMRImputed.csv trainTadploe.norm.RDATA testTadploe.norm.RDATA D3.norm.RDATA: CompleteMRIObs.txt D3Clean.txt
+TEST_TADPOLEMRI.RDATA D3Imputed.csv D3Imputed.RDATA TRAIN_TADPOLEMRI.RDATA TEST_TADPOLEMRImputed.csv trainTadploe.norm.RDATA testTadploe.norm.RDATA D3.norm.RDATA: CompleMRIObs.txt D3Clean.txt
 # Data conditioning
-# It will read the CompleteMRIObs.txt and will adjust all features for AGE and ICV
+# Script: TADPOLE_Data_Conditioning.Rmd
+# It will read the CompleMRIObs.txt and will adjust all features for AGE and ICV
 # it will read the D3Clean.txt and it will impute all missing values
 # the adjsted files then are normalized by the rank inverse transform.
 	echo "TODO"
@@ -83,4 +87,4 @@ ventricles_csvs: PredictorsList.txt D3Imputed.RDATA TEST_TADPOLEMRI.RDATA TRAIN_
 
 
 clean:
-	rm $(TMP_DIR)/*
+	rm AllSubjectsWithBasicInfo.txt

@@ -1,0 +1,138 @@
+---
+title: "TADPOLE"
+author: "José Tamez-Peña"
+date: "October 20, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, echo = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, warning = FALSE, message = FALSE,comment = "#>")
+```
+
+```{r Libraries and data, echo = FALSE}
+
+
+
+library("epiR")
+library("FRESA.CAD")
+library(network)
+library(GGally)
+library("e1071")
+
+TADPOLE_CROSSMRI <- read.delim("CompleMRIObs.txt",na.strings = c("NA","","#DIV/0!"))
+TADPOLE_predictors <- read.delim("PredictorsList.txt")
+D3_Set <- read.delim("D3Clean.txt",na.strings = c("NA","","#DIV/0!"))
+rownames(D3_Set) <- as.character(D3_Set$IDTIME)
+rownames(TADPOLE_CROSSMRI) <- as.character(TADPOLE_CROSSMRI$ID_TP)
+
+
+
+```
+
+
+```{r Train subsets}
+
+
+TRAIN_TADPOLEMRI <- subset(TADPOLE_CROSSMRI,TADPOLE_CROSSMRI$D1==1)
+TEST_TADPOLEMRI <- subset(TADPOLE_CROSSMRI,TADPOLE_CROSSMRI$D2==1)
+REDTRAIN_TADPOLEMRI <- subset(TADPOLE_CROSSMRI,TADPOLE_CROSSMRI$D1==1 & Train==1)
+
+D3imputed <- D3_Set
+D3imputed[,-c(1,2)] <- nearestneighborimpute(D3_Set[,-c(1,2)],REDTRAIN_TADPOLEMRI)
+rownames(D3imputed) <- D3imputed$RID
+
+toimpute <- as.character(TADPOLE_predictors[,1])
+
+TEST_TADPOLEMRI[,toimpute] <- nearestneighborimpute(TEST_TADPOLEMRI[,toimpute],TRAIN_TADPOLEMRI)
+#write.csv(TEST_TADPOLEMRI,file="TEST_TADPOLEMRImputed.csv")
+
+#write.csv(D3imputed,file="D3Imputed.csv")
+#save(D3imputed,file="D3Imputed.RDATA")
+#save(TEST_TADPOLEMRI,file="TEST_TADPOLEMRI.RDATA")
+#save(TRAIN_TADPOLEMRI,file="TRAIN_TADPOLEMRI.RDATA")
+
+
+```
+
+
+
+```{r Adjusting for age and ICV}
+
+
+TRAIN_TADPOLEMRI$cICV <- TRAIN_TADPOLEMRI$ICV^(1/3)
+TEST_TADPOLEMRI$cICV <- TEST_TADPOLEMRI$ICV^(1/3)
+D3imputed$cICV <- D3imputed$ICV^(1/3)
+rownames(TADPOLE_predictors) <- as.character(TADPOLE_predictors[,1])
+prednames <- as.character(TADPOLE_predictors[-c(1:17),1])
+
+TRAIN_TADPOLEMRI <- TRAIN_TADPOLEMRI[complete.cases(TRAIN_TADPOLEMRI[,prednames]),]
+ControlNormal <- subset(TRAIN_TADPOLEMRI,BXBL=="CN" & LastDX2=="NL" & LastVisit>2 & Month==0 & Train==1)
+sum(ControlNormal$PTGENDER==1)
+sum(ControlNormal$PTGENDER==2)
+hist(ControlNormal$MeanT)
+hist(subset(ControlNormal,PTGENDER==1)$MeanT)
+hist(subset(ControlNormal,PTGENDER==2)$MeanT)
+
+trainTadploe.adj <- featureAdjustment(TADPOLE_predictors[prednames,], baseModel="1+AGE+cICV",data=TRAIN_TADPOLEMRI,referenceframe=ControlNormal,strata="PTGENDER", type = "LM", pvalue = 0.001)
+
+testTadploe.adj <- featureAdjustment(TADPOLE_predictors[prednames,], baseModel="1+AGE+cICV",data=TEST_TADPOLEMRI,referenceframe=ControlNormal,strata="PTGENDER", type = "LM", pvalue = 0.001)
+
+ControlNormal.adj <- featureAdjustment(TADPOLE_predictors[prednames,], baseModel="1+AGE+cICV",data=ControlNormal,referenceframe=ControlNormal,strata="PTGENDER", type = "LM", pvalue = 0.001)
+
+system.time(D3.adj <- featureAdjustment(TADPOLE_predictors[prednames,], baseModel="1+AGE+cICV",data=D3imputed,referenceframe=ControlNormal,strata="PTGENDER", type = "LM", pvalue = 0.001))
+
+hist(subset(ControlNormal.adj,PTGENDER==1)$MeanT,breaks = 15)
+hist(subset(ControlNormal.adj,PTGENDER==2)$MeanT,breaks = 15)
+hist(subset(ControlNormal.adj,PTGENDER==1)$MeanSAD,breaks = 15)
+hist(subset(ControlNormal.adj,PTGENDER==2)$MeanSAD,breaks = 15)
+
+
+system.time(trainTadploe.norm <- rankInverseNormalDataFrame(TADPOLE_predictors[prednames,], trainTadploe.adj, ControlNormal.adj,strata="PTGENDER"))
+system.time(testTadploe.norm <- rankInverseNormalDataFrame(TADPOLE_predictors[prednames,], testTadploe.adj, ControlNormal.adj,strata="PTGENDER"))
+system.time(D3.norm <- rankInverseNormalDataFrame(TADPOLE_predictors[prednames,], D3.adj, ControlNormal.adj,strata="PTGENDER"))
+
+save(trainTadploe.norm,file="trainTadploe.norm.RDATA")
+save(testTadploe.norm,file="testTadploe.norm.RDATA")
+save(D3.norm,file="D3.norm.RDATA")
+
+plot(testTadploe.norm$MeanT~testTadploe.adj$MeanT)
+plot(trainTadploe.norm$MeanT~trainTadploe.adj$MeanT)
+plot(testTadploe.norm$MeanSAD~testTadploe.adj$MeanSAD)
+plot(trainTadploe.norm$MeanSAD~trainTadploe.adj$MeanSAD)
+
+```
+
+
+```{r spliting by visit}
+months <- c(0,3,6,12,18,24,30,36,42,48,54,60,66,72,78,84,90,96,102,108,114,120)
+
+VISIT_TRAINCROSSMRI <- list()
+VISIT_TRAINBASIC <- list()
+VISIT_TESTCROSSMRI <- list()
+VISIT_TESTBASIC <- list()
+i = 1;
+for (j in months )
+{
+  VISIT_TRAINCROSSMRI[[i]] <- subset(trainTadploe.norm,Month==j)
+  VISIT_TRAINBASIC[[i]] <- subset(TRAIN_TADPOLEBASIC,Month2==j)
+  VISIT_TESTCROSSMRI[[i]] <- subset(testTadploe.norm,Month==j)
+  VISIT_TESTBASIC[[i]] <- subset(TEST_TADPOLEBASIC,Month2==j)
+  i = i + 1
+}
+sampledcolumns <- c("RID",as.character(TADPOLE_predictors[,1]));
+
+testLastTimePointWithNL <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="NL")[,sampledcolumns]
+testLastTimePointWithMCI <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="MCI")[,sampledcolumns]
+testLastTimePointWithAD <- subset(testTadploe.norm,LastCompleteObs==1 & LastDX2=="Dementia")[,sampledcolumns]
+
+testWithNL <- subset(testTadploe.norm,LastDX2=="NL")[,sampledcolumns]
+testWithMCI <- subset(testTadploe.norm,LastDX2=="MCI")[,sampledcolumns]
+testWithAD <- subset(testTadploe.norm,LastDX2=="Dementia")[,sampledcolumns]
+
+
+```
+
+
