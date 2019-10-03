@@ -1,19 +1,21 @@
 FROM ubuntu:bionic
 
+COPY ./src/FRESA.CAD_3.0.0.tar.gz /FRESA.CAD_3.0.0.tar.gz
+
 RUN apt-get update &&\
     ln -fs /usr/share/zoneinfo/UTC /etc/localtime &&\
     echo "UTC" > /etc/timezone &&\
     DEBIAN_FRONTEND=noninteractive apt-get install -y tzdata &&\
     apt-get install -y r-base-core pandoc && \
     R -q -e 'install.packages(c("rmarkdown", "epiR", "network", "GGally", "e1071"))' &&\
-    R -q -e 'install.packages(c("miscTools", "Hmisc", "pROC", "RcppArmadillo"))'
+    R -q -e 'install.packages(c("miscTools", "Hmisc", "pROC", "RcppArmadillo"))' &&\
+    R -q -e 'install.packages("/FRESA.CAD_3.0.0.tar.gz", repos = NULL, type="source")' &&\
+    mkdir /app
 
-COPY . /app
+COPY PredictorsList.txt Makefile src /app/
 WORKDIR /app
 
-RUN R -q -e 'install.packages("/app/src/FRESA.CAD_3.0.0.tar.gz", repos = NULL, type="source")'
-
-CMD ['make']
+CMD ['make', 'data_condition']
 
 
 # docker build . -t borre-train

@@ -51,15 +51,17 @@ D3Clean.txt:
 
 DATA_CONDITION_INPUT = CompleMRIObs.txt D3Clean.txt
 DATA_CONDITION_OUTPUT = TEST_TADPOLEMRI.RDATA D3Imputed.csv D3Imputed.RDATA TRAIN_TADPOLEMRI.RDATA TEST_TADPOLEMRImputed.csv trainTadploe.norm.RDATA testTadploe.norm.RDATA D3.norm.RDATA
-$(DATA_CONDITION_OUTPUT): $(DATA_CONDITION_INPUT)
+# alias data_condition
 data_condition: $(DATA_CONDITION_OUTPUT)
+$(DATA_CONDITION_OUTPUT): $(DATA_CONDITION_INPUT)
+	$(call rmarkdown,src/TADPOLE_Data_Conditioning.Rmd)
 
 # Data conditioning
 # Script: TADPOLE_Data_Conditioning.Rmd
 # It will read the CompleMRIObs.txt and will adjust all features for AGE and ICV
 # it will read the D3Clean.txt and it will impute all missing values
 # the adjsted files then are normalized by the rank inverse transform.
-	$(call rmarkdown,src/TADPOLE_Data_Conditioning.Rmd)
+
 
 csvs_conversion_prediction: PredictorsList.txt D3Imputed.RDATA TEST_TADPOLEMRI.RDATA TRAIN_TADPOLEMRI.RDATA trainTadploe.norm.RDATA testTadploe.norm.RDATA D3.norm.RDATA
 # Script: TADPOLE_MCI_to_AD_v4.Rmd
@@ -96,4 +98,4 @@ ventricles_csvs: PredictorsList.txt D3Imputed.RDATA TEST_TADPOLEMRI.RDATA TRAIN_
 
 
 clean:
-	rm AllSubjectsWithBasicInfo.txt
+	rm -f $(DATA_CONDITION_INPUT) $(DATA_CONDITION_OUTPUT)
