@@ -1,6 +1,3 @@
-DATA_DIR = ../data
-TMP_DIR = ./tmp
-
 rmarkdown = R --quiet -e "rmarkdown::render('$(1)', knit_root_dir='`pwd`')"
 
 
